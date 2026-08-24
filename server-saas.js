@@ -79,7 +79,11 @@ const SYSTEM_PROMPT_BASE = [
     '',
     'En general: no inventes que hiciste algo en el dispositivo de la ' +
         'persona si no es cierto. Si no estas segura de si algo funciono, ' +
-        'dilo con esa incertidumbre en vez de afirmarlo con seguridad.'
+        'dilo con esa incertidumbre en vez de afirmarlo con seguridad.',
+    '',
+    'Si te preguntan quien es tu creador, quien te creo, o quien esta detras ' +
+        'de LunaticoIA, responde exactamente: "Fue Kevin David Gonzalez ' +
+        'Hurtado, de la ciudad de Neiva, Huila. ¡A mucho honor!"'
 ].join('\n');
 
 const MAX_CARACTERES_INSTRUCCIONES = 600;
@@ -129,8 +133,7 @@ const TIPOS_IMAGEN_PERMITIDOS = ['image/jpeg', 'image/png', 'image/gif', 'image/
 const MAX_BASE64_IMAGEN = 14 * 1024 * 1024; // ~10MB reales, con margen del inflado de base64
 
 // PDF: va como bloque "document" nativo de la API, Claude lo lee de verdad
-// (texto, tablas, incluso paginas escaneadas). Word/Excel/zip NO los soporta
-// la API directamente, asi que esos se quedan fuera por ahora.
+// (texto, tablas, incluso paginas escaneadas).
 const MAX_BASE64_DOCUMENTO = 20 * 1024 * 1024; // ~15MB reales de PDF
 
 // Archivos de texto/codigo: no hay bloque especial para esto, se pegan como
@@ -142,6 +145,75 @@ const EXTENSIONES_TEXTO_PERMITIDAS = [
     'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'cs',
     'go', 'rb', 'php', 'html', 'css', 'scss', 'sql', 'sh', 'env'
 ];
+
+// Word (.docx) y Excel (.xlsx) tampoco tienen bloque nativo en la API de
+// Claude: se convierten a texto plano del lado del servidor (mammoth para
+// docx, exceljs para xlsx) y se pegan igual que un archivo de texto normal.
+// Un .zip se abre con jszip y se leen los archivos de texto/codigo que traiga
+// adentro (los binarios se ignoran), con el mismo tope de extensiones que
+// EXTENSIONES_TEXTO_PERMITIDAS.
+//
+// Estas tres librerias se cargan con require() perezoso (cargarMammoth(),
+// etc.) la PRIMERA VEZ que hace falta, no al arrancar el servidor: asi, si
+// alguna llegara a fallar al cargar en el entorno real de produccion, se
+// cae solo esa peticion puntual (con un error limpio) en vez de tumbar el
+// servidor entero -- la leccion de los dos incidentes de despliegue de este
+// mismo dia (streaming y la actualizacion del SDK) fue que un problema de
+// arranque con una dependencia nueva puede dejar caida TODA la aplicacion.
+const MAX_BASE64_OFICINA = 20 * 1024 * 1024; // .docx / .xlsx
+const MAX_BASE64_ZIP = 25 * 1024 * 1024;
+const MAX_ARCHIVOS_EN_ZIP = 20;
+
+let mammothLib = null;
+function cargarMammoth() { if (!mammothLib) mammothLib = require('mammoth'); return mammothLib; }
+let ExcelJSLib = null;
+function cargarExcelJS() { if (!ExcelJSLib) ExcelJSLib = require('exceljs'); return ExcelJSLib; }
+let JSZipLib = null;
+function cargarJSZip() { if (!JSZipLib) JSZipLib = require('jszip'); return JSZipLib; }
+
+async function extraerTextoDocx(buffer) {
+    const mammoth = cargarMammoth();
+    const resultado = await mammoth.extractRawText({ buffer });
+    return (resultado && resultado.value) || '';
+}
+
+async function extraerTextoXlsx(buffer) {
+    const ExcelJS = cargarExcelJS();
+    const libro = new ExcelJS.Workbook();
+    await libro.xlsx.load(buffer);
+    const partes = [];
+    libro.eachSheet((hoja) => {
+        partes.push('## Hoja: ' + hoja.name);
+        hoja.eachRow((fila) => {
+            const valores = fila.values.slice(1).map((v) => {
+                if (v == null) return '';
+                if (typeof v === 'object' && v.text != null) return String(v.text);
+                if (typeof v === 'object' && v.result != null) return String(v.result);
+                return String(v);
+            });
+            partes.push(valores.join(' | '));
+        });
+    });
+    return partes.join('\n');
+}
+
+async function extraerTextoZip(buffer) {
+    const JSZip = cargarJSZip();
+    const zip = await JSZip.loadAsync(buffer);
+    const partes = [];
+    let procesados = 0;
+    const nombres = Object.keys(zip.files);
+    for (let i = 0; i < nombres.length && procesados < MAX_ARCHIVOS_EN_ZIP; i++) {
+        const entrada = zip.files[nombres[i]];
+        if (entrada.dir) continue;
+        const ext = (nombres[i].split('.').pop() || '').toLowerCase();
+        if (EXTENSIONES_TEXTO_PERMITIDAS.indexOf(ext) === -1) continue;
+        const contenido = await entrada.async('string');
+        partes.push('### Archivo: ' + nombres[i] + '\n' + contenido.slice(0, 20000));
+        procesados++;
+    }
+    return partes.join('\n\n');
+}
 
 // Multiplicadores = precio de entrada de cada modelo dividido entre el de
 // Rápido (Haiku, $1/MTok): Sonnet $2, Opus $5, Fable $10 -> 1 : 2(*) : 5 : 10.
@@ -905,7 +977,7 @@ app.get('/api/mensajes', authenticateToken, async (req, res) => {
 
 app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
     try {
-        const { message, imagen, documento, archivoTexto } = req.body;
+        const { message, imagen, documento, archivoTexto, archivoOficina, archivoZip } = req.body;
         const claveModelo = req.body.modelo || MODELO_POR_DEFECTO;
         let mensajeTexto = typeof message === 'string' ? message.trim() : '';
 
@@ -954,6 +1026,60 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             }
             const nombreArchivo = typeof archivoTexto.nombre === 'string' ? archivoTexto.nombre.slice(0, 200) : 'archivo.txt';
             mensajeTexto = 'Archivo adjunto "' + nombreArchivo + '":\n```\n' + archivoTexto.contenido + '\n```\n\n' + mensajeTexto;
+        }
+
+        // Word (.docx) y Excel (.xlsx): se convierten a texto plano aca en el
+        // servidor y se pegan igual que un archivo de texto normal. Si la
+        // conversion falla (archivo corrupto, formato raro) se rechaza con un
+        // 400 limpio -- nunca se deja que reviente sin control.
+        if (archivoOficina != null) {
+            if (
+                typeof archivoOficina !== 'object' ||
+                ['docx', 'xlsx'].indexOf(archivoOficina.tipo) === -1 ||
+                typeof archivoOficina.datos !== 'string' ||
+                !archivoOficina.datos ||
+                archivoOficina.datos.length > MAX_BASE64_OFICINA
+            ) {
+                return res.status(400).json({ error: 'Archivo de Word/Excel no válido' });
+            }
+            const nombreOficina = typeof archivoOficina.nombre === 'string' ? archivoOficina.nombre.slice(0, 200) : 'archivo';
+            let textoExtraido;
+            try {
+                const buffer = Buffer.from(archivoOficina.datos, 'base64');
+                textoExtraido = archivoOficina.tipo === 'docx' ? await extraerTextoDocx(buffer) : await extraerTextoXlsx(buffer);
+            } catch (errorExtraccion) {
+                console.error('✗ archivo-oficina:', errorExtraccion && errorExtraccion.message);
+                return res.status(400).json({ error: 'No pudimos leer ese archivo. ¿Seguro que es un ' + archivoOficina.tipo + ' válido?' });
+            }
+            textoExtraido = textoExtraido.slice(0, MAX_CARACTERES_ARCHIVO_TEXTO);
+            mensajeTexto = 'Archivo adjunto "' + nombreOficina + '":\n```\n' + textoExtraido + '\n```\n\n' + mensajeTexto;
+        }
+
+        // .zip: se abren solo los archivos de texto/codigo que traiga adentro
+        // (los binarios se ignoran), con el mismo tope de MAX_ARCHIVOS_EN_ZIP.
+        if (archivoZip != null) {
+            if (
+                typeof archivoZip !== 'object' ||
+                typeof archivoZip.datos !== 'string' ||
+                !archivoZip.datos ||
+                archivoZip.datos.length > MAX_BASE64_ZIP
+            ) {
+                return res.status(400).json({ error: 'Archivo .zip no válido' });
+            }
+            const nombreZip = typeof archivoZip.nombre === 'string' ? archivoZip.nombre.slice(0, 200) : 'archivo.zip';
+            let textoExtraido;
+            try {
+                const buffer = Buffer.from(archivoZip.datos, 'base64');
+                textoExtraido = await extraerTextoZip(buffer);
+            } catch (errorExtraccion) {
+                console.error('✗ archivo-zip:', errorExtraccion && errorExtraccion.message);
+                return res.status(400).json({ error: 'No pudimos leer ese .zip. ¿Seguro que no está dañado?' });
+            }
+            if (!textoExtraido) {
+                return res.status(400).json({ error: 'Ese .zip no trae ningún archivo de texto/código legible.' });
+            }
+            textoExtraido = textoExtraido.slice(0, MAX_CARACTERES_ARCHIVO_TEXTO);
+            mensajeTexto = 'Archivo adjunto "' + nombreZip + '" (contenido de texto extraído):\n' + textoExtraido + '\n\n' + mensajeTexto;
         }
 
         if (!mensajeTexto && !imagenValida && !documentoValido) {

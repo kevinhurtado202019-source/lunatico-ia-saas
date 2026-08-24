@@ -1176,7 +1176,7 @@
               <path d="M21.4 11.1 12.7 19.8a4.5 4.5 0 0 1-6.4-6.4l8.7-8.7a3 3 0 0 1 4.2 4.2L10.5 17.7a1.5 1.5 0 0 1-2.1-2.1l7.1-7.1"/>
             </svg>
           </button>
-          <input type="file" id="archivoAdjunto" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,.txt,.md,.csv,.json,.yml,.yaml,.xml,.log,.js,.jsx,.ts,.tsx,.py,.java,.c,.cpp,.h,.hpp,.cs,.go,.rb,.php,.html,.css,.scss,.sql,.sh,.env" class="oculto" onchange="elegirArchivo(event)">
+          <input type="file" id="archivoAdjunto" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,.docx,.xlsx,.zip,.txt,.md,.csv,.json,.yml,.yaml,.xml,.log,.js,.jsx,.ts,.tsx,.py,.java,.c,.cpp,.h,.hpp,.cs,.go,.rb,.php,.html,.css,.scss,.sql,.sh,.env" class="oculto" onchange="elegirArchivo(event)">
           <button class="icono microfono" id="btnMicrofono" type="button" onclick="alternarDictado()" aria-label="Dictar por voz" title="Dictar por voz">
             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <rect x="9" y="3" width="6" height="11" rx="3"/>
@@ -1924,6 +1924,8 @@
 
   var TIPOS_IMAGEN_VALIDOS = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
   var MAX_PDF_BYTES = 15 * 1024 * 1024;
+  var MAX_OFICINA_BYTES = 15 * 1024 * 1024;
+  var MAX_ZIP_BYTES = 20 * 1024 * 1024;
   var MAX_TEXTO_CARACTERES = 120000;
   var EXTENSIONES_TEXTO = ['txt', 'md', 'csv', 'json', 'yml', 'yaml', 'xml', 'log',
     'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'cs',
@@ -1938,7 +1940,8 @@
     } else {
       $('adjuntoPreview').classList.add('oculto');
       $('adjuntoIcono').classList.remove('oculto');
-      $('adjuntoIcono').textContent = /\.pdf$/i.test(nombre) ? '📄' : '📝';
+      $('adjuntoIcono').textContent = /\.pdf$/i.test(nombre) ? '📄' :
+        /\.xlsx$/i.test(nombre) ? '📊' : /\.zip$/i.test(nombre) ? '🗂️' : '📝';
     }
     $('cajaAdjunto').classList.remove('oculto');
     avisoPie('');
@@ -1989,6 +1992,40 @@
       return;
     }
 
+    if (ext === 'docx' || ext === 'xlsx') {
+      if (archivo.size > MAX_OFICINA_BYTES) {
+        avisoPie('El archivo pesa demasiado (máximo 15 MB).');
+        return;
+      }
+      var lectorOficina = new FileReader();
+      lectorOficina.onload = function () {
+        var resultado = String(lectorOficina.result || '');
+        var datos = resultado.slice(resultado.indexOf(',') + 1);
+        adjuntoActual = { tipo: 'oficina', subtipo: ext, mediaType: archivo.type, datos: datos, nombre: archivo.name };
+        mostrarAdjunto(archivo.name, null);
+      };
+      lectorOficina.onerror = function () { avisoPie('No se pudo leer el archivo. Inténtalo de nuevo.'); };
+      lectorOficina.readAsDataURL(archivo);
+      return;
+    }
+
+    if (ext === 'zip') {
+      if (archivo.size > MAX_ZIP_BYTES) {
+        avisoPie('El .zip pesa demasiado (máximo 20 MB).');
+        return;
+      }
+      var lectorZip = new FileReader();
+      lectorZip.onload = function () {
+        var resultado = String(lectorZip.result || '');
+        var datos = resultado.slice(resultado.indexOf(',') + 1);
+        adjuntoActual = { tipo: 'zip', datos: datos, nombre: archivo.name };
+        mostrarAdjunto(archivo.name, null);
+      };
+      lectorZip.onerror = function () { avisoPie('No se pudo leer el .zip. Inténtalo de nuevo.'); };
+      lectorZip.readAsDataURL(archivo);
+      return;
+    }
+
     if (EXTENSIONES_TEXTO.indexOf(ext) !== -1) {
       var lectorTexto = new FileReader();
       lectorTexto.onload = function () {
@@ -2005,7 +2042,7 @@
       return;
     }
 
-    avisoPie('Ese tipo de archivo no se puede adjuntar todavía (imágenes, PDF o texto/código sí).');
+    avisoPie('Ese tipo de archivo no se puede adjuntar todavía (imágenes, PDF, Word, Excel, zip o texto/código sí).');
   };
 
   window.quitarAdjunto = function () {
@@ -2230,7 +2267,10 @@
     } else if (adjunto) {
       var chipMio = document.createElement('div');
       chipMio.className = 'archivo-mensaje';
-      chipMio.textContent = (adjunto.tipo === 'documento' ? '📄 ' : '📝 ') + adjunto.nombre;
+      var iconoChip = adjunto.tipo === 'documento' ? '📄 ' :
+        (adjunto.tipo === 'oficina' && adjunto.subtipo === 'xlsx') ? '📊 ' :
+        adjunto.tipo === 'zip' ? '🗂️ ' : '📝 ';
+      chipMio.textContent = iconoChip + adjunto.nombre;
       mio.texto.insertBefore(chipMio, mio.texto.firstChild);
     }
     var esperando = turno('ia', 'LunaticoIA', null);
@@ -2249,7 +2289,9 @@
         proyectoId: proyectoActual ? proyectoActual.id : undefined,
         imagen: adjunto && adjunto.tipo === 'imagen' ? { mediaType: adjunto.mediaType, datos: adjunto.datos } : undefined,
         documento: adjunto && adjunto.tipo === 'documento' ? { mediaType: adjunto.mediaType, datos: adjunto.datos, nombre: adjunto.nombre } : undefined,
-        archivoTexto: adjunto && adjunto.tipo === 'texto' ? { contenido: adjunto.contenido, nombre: adjunto.nombre } : undefined
+        archivoTexto: adjunto && adjunto.tipo === 'texto' ? { contenido: adjunto.contenido, nombre: adjunto.nombre } : undefined,
+        archivoOficina: adjunto && adjunto.tipo === 'oficina' ? { tipo: adjunto.subtipo, datos: adjunto.datos, nombre: adjunto.nombre } : undefined,
+        archivoZip: adjunto && adjunto.tipo === 'zip' ? { datos: adjunto.datos, nombre: adjunto.nombre } : undefined
       })
     }).then(function (r) {
       if (r.res.status === 402) {

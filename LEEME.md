@@ -132,6 +132,13 @@ escribiendo su contenido completo en la respuesta (en un bloque de código)
 para que la persona lo copie y lo guarde ella misma — nunca afirmar haberlo
 guardado, exportado o descargado en su equipo.
 
+### Atribución del creador
+
+`SYSTEM_PROMPT_BASE` incluye una instrucción para que, si le preguntan quién
+la creó, LunaticoIA responda con el nombre del dueño (Kevin David González
+Hurtado, de Neiva, Huila). Es una respuesta fija, no algo que el modelo deba
+inventar o adivinar.
+
 ### Respuestas cortadas (`stop_reason`)
 
 `MAX_TOKENS_RESPUESTA` subió de 1.024 a 4.096 (por lo del punto anterior) y
@@ -165,10 +172,34 @@ historial, que en la práctica funciona bien casi siempre.
   esto en la API, así que se pega tal cual dentro del mensaje, envuelto en un
   bloque de código con el nombre del archivo delante.
 
-**Word, Excel y `.zip` quedan fuera a propósito**: la API de Claude no tiene
-un bloque nativo para binarios de Office ni para archivos comprimidos, y
-convertirlos del lado del servidor (con alguna librería) es una pieza mucho
-más grande que no se justificaba para esta primera versión.
+**Word (`.docx`), Excel (`.xlsx`) y `.zip` (27 de agosto de 2026):** la API de
+Claude tampoco tiene bloque nativo para estos, así que se convierten a texto
+plano del lado del servidor y se pegan igual que `archivoTexto` (envueltos en
+un bloque de código):
+
+- `archivoOficina: {tipo: 'docx'|'xlsx', datos, nombre}` — `.docx` se
+  convierte con `mammoth` (texto plano, sin formato); `.xlsx` con `exceljs`
+  (cada hoja como filas separadas por `|`, con el nombre de la hoja delante).
+  Hasta 15MB en base64.
+- `archivoZip: {datos, nombre}` — se abre con `jszip` y se leen solo los
+  archivos de texto/código de adentro (misma lista blanca que
+  `EXTENSIONES_TEXTO_PERMITIDAS`); los binarios (imágenes, ejecutables, etc.)
+  se ignoran. Tope de `MAX_ARCHIVOS_EN_ZIP` (20) archivos. Hasta 20MB en
+  base64.
+
+**`mammoth`, `exceljs` y `jszip` se cargan con `require()` perezoso** (la
+primera vez que hace falta cada una, no al arrancar el servidor) — decisión
+tomada después de que ESE MISMO DÍA dos despliegues seguidos tumbaran
+producción por problemas de arranque con una dependencia nueva (ver más abajo
+"Streaming" y el intento de actualizar el SDK). Si alguna de estas tres
+llegara a fallar al cargar en el entorno real, se cae solo esa petición
+puntual con un error limpio (400), no el servidor entero. Cualquier error de
+conversión (archivo corrupto, formato raro) también se atrapa y se devuelve
+como 400, nunca como un crash sin control.
+
+Word, Excel y zip que NO se soportan: `.doc`/`.xls` viejos (formato binario
+distinto, no OOXML), `.pptx`, y cualquier cosa dentro de un `.zip` que no sea
+texto/código reconocible.
 
 Todos van **antes** del texto en el mensaje (mejor resultado, según la propia
 guía de Anthropic), sin pasar por la Files API — más simple, sin archivos que
