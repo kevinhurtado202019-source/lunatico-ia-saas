@@ -566,22 +566,21 @@
   .turno.ia .texto .bloque-codigo { position: relative; margin: .2em 0 .85em; }
   .turno.ia .texto pre {
     background: var(--mas-alta); border: 1px solid var(--borde-suave); border-radius: 10px;
-    padding: 13px 15px; overflow-x: auto; margin: 0;
+    padding: 13px 15px; padding-top: 38px; margin: 0;
+    max-height: 340px; overflow: auto;
+    scrollbar-width: thin; scrollbar-color: var(--borde) transparent;
   }
+  .turno.ia .texto pre::-webkit-scrollbar { width: 9px; height: 9px; }
+  .turno.ia .texto pre::-webkit-scrollbar-thumb { background: var(--borde); border-radius: 5px; }
   .turno.ia .texto pre code { background: none; padding: 0; font-size: .85em; line-height: 1.55; }
   .turno.ia .texto .copiar-codigo {
     position: absolute; top: 8px; right: 8px; z-index: 1;
     background: var(--noche); color: var(--tenue); border: 1px solid var(--borde-suave);
     border-radius: 6px; padding: 4px 10px; font-size: .75em; font-family: var(--ui);
-    cursor: pointer; opacity: 0; transition: opacity .15s, color .15s, border-color .15s;
+    cursor: pointer; transition: color .15s, border-color .15s;
   }
-  .turno.ia .texto .bloque-codigo:hover .copiar-codigo,
-  .turno.ia .texto .copiar-codigo:focus-visible { opacity: 1; }
   .turno.ia .texto .copiar-codigo:hover { color: var(--texto); border-color: var(--luna); }
-  .turno.ia .texto .copiar-codigo.copiado { opacity: 1; color: var(--luna); border-color: var(--luna); }
-  @media (hover: none) {
-    .turno.ia .texto .copiar-codigo { opacity: 1; }
-  }
+  .turno.ia .texto .copiar-codigo.copiado { color: var(--luna); border-color: var(--luna); }
   .turno.ia .texto h1, .turno.ia .texto h2, .turno.ia .texto h3 {
     font-family: var(--display); font-weight: 700; line-height: 1.3; margin: .9em 0 .4em;
   }
