@@ -565,16 +565,8 @@
     color: var(--tenue); font-variant-numeric: tabular-nums;
   }
 
-  .pensando { display: inline-flex; align-items: center; gap: 9px; color: var(--tenue); }
-  .escribiendo { display: inline-flex; gap: 5px; padding: 5px 0; }
-  .escribiendo i {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--tenue); animation: latir 1.3s infinite ease-in-out;
-  }
-  .escribiendo i:nth-child(2) { animation-delay: .18s; }
-  .escribiendo i:nth-child(3) { animation-delay: .36s; }
-  @keyframes latir { 0%,60%,100% { opacity: .25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
-  @media (prefers-reduced-motion: reduce) { .escribiendo i { animation: none; opacity: .6; } }
+  .pensando { display: inline-flex; align-items: center; gap: 10px; color: var(--tenue); }
+  .pensando .logo-pensando { width: 1.9em; height: 1.9em; margin: -.2em 0; }
 
   #numSaldo { transition: color .35s ease; font-variant-numeric: tabular-nums; }
   #numSaldo.bajando { color: var(--error); }
@@ -1705,6 +1697,17 @@
     return html || '<p></p>';
   }
 
+  // Clona el logo animado del header (mismo PNG, sin repetir el base64) para
+  // usarlo como indicador de "pensando" dentro del hilo, en vez de puntos.
+  function logoFlotante() {
+    var origen = $('logoRespondiendo');
+    if (!origen) return '';
+    var clon = origen.cloneNode(true);
+    clon.removeAttribute('id');
+    clon.classList.add('logo-pensando');
+    return clon.outerHTML;
+  }
+
   window.enviar = function () {
     if (enviando) return;
     var t = $('entrada');
@@ -1718,7 +1721,7 @@
 
     var mio = turno('yo', 'Tú', mensaje);
     var esperando = turno('ia', 'LunaticoIA', null);
-    esperando.texto.innerHTML = '<span class="pensando">Pensando<span class="escribiendo"><i></i><i></i><i></i></span></span>';
+    esperando.texto.innerHTML = '<span class="pensando">' + logoFlotante() + 'Pensando</span>';
 
     // Si el fetch revienta, la peticion nunca salio: devolvemos el texto al
     // campo y quitamos los turnos, para que reintentar sea pulsar Enter.
