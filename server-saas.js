@@ -89,9 +89,13 @@ const MENSAJES_POR_HISTORIAL_VISUAL = 50;
 // Cada usuario puede guardar sus propias instrucciones (tono, idioma,
 // formato preferido, etc.) desde "Mi cuenta". Van pegadas al system prompt
 // base, nunca lo reemplazan -- asi las reglas de seguridad de arriba
-// (lo del sandbox de code_execution) siempre se respetan.
-function construirSystemPrompt(user) {
-    const instrucciones = user && typeof user.instrucciones === 'string' ? user.instrucciones.trim() : '';
+// (lo del sandbox de code_execution) siempre se respetan. Si el chat es
+// dentro de un proyecto con SUS PROPIAS instrucciones, esas mandan en vez de
+// las generales de la cuenta -- mas especifico gana.
+function construirSystemPrompt(user, proyecto) {
+    const instruccionesProyecto = proyecto && typeof proyecto.instrucciones === 'string' ? proyecto.instrucciones.trim() : '';
+    const instrucciones = instruccionesProyecto ||
+        (user && typeof user.instrucciones === 'string' ? user.instrucciones.trim() : '');
     if (!instrucciones) return SYSTEM_PROMPT_BASE;
     return SYSTEM_PROMPT_BASE + '\n\n' +
         'Instrucciones personalizadas de la persona que te escribe (sobre ' +
@@ -580,6 +584,50 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
     }
 });
 
+// Panel de admin: reutiliza el mismo flag de creditosIlimitados (pensado
+// para el creador de LunaticoIA) en vez de agregar un rol aparte -- en este
+// SaaS de un solo dueno, "cuenta ilimitada" y "cuenta de administracion" son
+// la misma persona. Nunca confiar en el frontend para esto: se valida aca.
+app.get('/api/admin/usuarios', authenticateToken, async (req, res) => {
+    try {
+        const users = db.collection('users');
+        const yo = await users.findOne({ _id: new ObjectId(req.user.userId) });
+        if (!yo || yo.creditosIlimitados !== true) {
+            return res.status(403).json({ error: 'No autorizado' });
+        }
+
+        const todos = await users.find({}).sort({ createdAt: -1 }).toArray();
+        const mensajes = await db.collection('messages').find({ role: 'assistant' }).toArray();
+
+        const porUsuario = {};
+        mensajes.forEach((m) => {
+            const clave = (m.userId || '').toString();
+            if (!porUsuario[clave]) porUsuario[clave] = {};
+            const modeloUsado = m.modelo || 'desconocido';
+            porUsuario[clave][modeloUsado] = (porUsuario[clave][modeloUsado] || 0) + 1;
+        });
+
+        res.json({
+            usuarios: todos.map((u) => {
+                const porModelo = porUsuario[u._id.toString()] || {};
+                const totalMensajes = Object.values(porModelo).reduce((a, b) => a + b, 0);
+                return {
+                    email: u.email,
+                    name: u.name || u.email.split('@')[0],
+                    creditBalance: u.creditBalance,
+                    creditosIlimitados: u.creditosIlimitados === true,
+                    emailVerified: u.emailVerified === true,
+                    createdAt: u.createdAt,
+                    mensajesPorModelo: porModelo,
+                    totalMensajes
+                };
+            })
+        });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos cargar el panel de admin.', error, 'admin-usuarios');
+    }
+});
+
 app.post('/api/instrucciones', authenticateToken, async (req, res) => {
     try {
         const texto = typeof req.body.instrucciones === 'string' ? req.body.instrucciones.trim() : '';
@@ -734,7 +782,12 @@ app.get('/api/proyectos', authenticateToken, async (req, res) => {
         const userId = new ObjectId(req.user.userId);
         const lista = await proyectos.find({ userId }).sort({ createdAt: -1 }).toArray();
         res.json({
-            proyectos: lista.map((p) => ({ id: p._id.toString(), nombre: p.nombre, createdAt: p.createdAt }))
+            proyectos: lista.map((p) => ({
+                id: p._id.toString(),
+                nombre: p.nombre,
+                createdAt: p.createdAt,
+                instrucciones: typeof p.instrucciones === 'string' ? p.instrucciones : ''
+            }))
         });
     } catch (error) {
         fallo(res, 500, 'No pudimos cargar tus proyectos.', error, 'proyectos-listar');
@@ -755,6 +808,28 @@ app.post('/api/proyectos', authenticateToken, async (req, res) => {
         res.status(201).json({ id: r.insertedId.toString(), nombre, createdAt });
     } catch (error) {
         fallo(res, 500, 'No pudimos crear el proyecto.', error, 'proyectos-crear');
+    }
+});
+
+app.put('/api/proyectos/:id/instrucciones', authenticateToken, async (req, res) => {
+    try {
+        let proyectoId;
+        try { proyectoId = new ObjectId(req.params.id); } catch (e) {
+            return res.status(400).json({ error: 'Proyecto no válido' });
+        }
+        const texto = typeof req.body.instrucciones === 'string' ? req.body.instrucciones.trim() : '';
+        if (texto.length > MAX_CARACTERES_INSTRUCCIONES) {
+            return res.status(400).json({ error: 'Máximo ' + MAX_CARACTERES_INSTRUCCIONES + ' caracteres' });
+        }
+        const proyectos = db.collection('proyectos');
+        const userId = new ObjectId(req.user.userId);
+        const proyecto = await proyectos.findOne({ _id: proyectoId, userId });
+        if (!proyecto) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+        await proyectos.updateOne({ _id: proyectoId, userId }, { $set: { instrucciones: texto } });
+        res.json({ instrucciones: texto });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos guardar las instrucciones del proyecto.', error, 'proyectos-instrucciones');
     }
 });
 
@@ -898,12 +973,13 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         // que existir y ser del usuario -- si no, mejor rechazar que guardar
         // el mensaje en un proyecto ajeno o inexistente.
         let proyectoId = null;
+        let proyectoActual = null;
         if (req.body.proyectoId) {
             try { proyectoId = new ObjectId(req.body.proyectoId); } catch (e) {
                 return res.status(400).json({ error: 'Proyecto no válido' });
             }
-            const proyectoExiste = await proyectosCol.findOne({ _id: proyectoId, userId });
-            if (!proyectoExiste) return res.status(404).json({ error: 'Proyecto no encontrado' });
+            proyectoActual = await proyectosCol.findOne({ _id: proyectoId, userId });
+            if (!proyectoActual) return res.status(404).json({ error: 'Proyecto no encontrado' });
         }
 
         let user = await users.findOne({ _id: userId });
@@ -962,7 +1038,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         const response = await claudeClient.messages.create({
             model: modelo.id,
             max_tokens: MAX_TOKENS_RESPUESTA,
-            system: construirSystemPrompt(user),
+            system: construirSystemPrompt(user, proyectoActual),
             messages: messagesForClaude,
             tools: HERRAMIENTAS_IA
         });
@@ -1011,6 +1087,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         });
         await messages.insertOne({
             userId, proyectoId, role: 'assistant', content: aiMessage,
+            modelo: claveModelo,
             createdAt: new Date(guardadoEn.getTime() + 1)
         });
 

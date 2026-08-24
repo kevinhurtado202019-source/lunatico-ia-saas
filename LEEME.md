@@ -243,10 +243,42 @@ megabytes de base64 solo para pintar la conversación.
 Desde "Mi cuenta" cada usuario puede guardar sus propias instrucciones (tono,
 idioma, qué tan detallada quiere la respuesta, etc.) vía
 `POST /api/instrucciones` — hasta 600 caracteres, se guardan en
-`user.instrucciones`. `construirSystemPrompt(user)` las pega al final de
-`SYSTEM_PROMPT_BASE` en cada llamada a Claude; nunca lo reemplazan, así que
-las reglas de seguridad de arriba (lo del sandbox de `code_execution`) siempre
-se respetan aunque alguien intente escribir instrucciones que las contradigan.
+`user.instrucciones`. `construirSystemPrompt(user, proyecto)` las pega al
+final de `SYSTEM_PROMPT_BASE` en cada llamada a Claude; nunca lo reemplazan,
+así que las reglas de seguridad de arriba (lo del sandbox de
+`code_execution`) siempre se respetan aunque alguien intente escribir
+instrucciones que las contradigan.
+
+**Instrucciones por proyecto (26 de agosto de 2026):** cada proyecto puede
+tener sus propias instrucciones (`PUT /api/proyectos/:id/instrucciones`,
+mismo límite de 600 caracteres, se editan desde el propio panel de
+Proyectos). Si el proyecto activo tiene instrucciones propias, esas
+**reemplazan** a las generales de la cuenta mientras se está en ese proyecto
+— no se combinan, gana la más específica. Fuera de un proyecto (chat
+General) siguen aplicando las generales de siempre.
+
+### Descargar la respuesta completa
+
+Además del botón "Descargar" por bloque de código, cada respuesta de la IA
+trae un botón "⬇ Descargar respuesta" que baja el mensaje completo como
+`.md` — para cuando lo que se pidió fue un texto largo (una carta, un
+resumen) sin ningún bloque de código de por medio, que antes no tenía
+ninguna forma de guardarse aparte de copiar y pegar a mano.
+
+### Panel de admin
+
+Reutiliza el mismo flag `creditosIlimitados` (pensado para el creador de
+LunaticoIA) como si fuera un rol de administrador — en un SaaS de un solo
+dueño, "cuenta ilimitada" y "cuenta de administración" son la misma persona,
+así que no se agregó un rol aparte. `GET /api/admin/usuarios` valida esto
+del lado del servidor (nunca confiar en que el botón esté oculto en el
+frontend) y devuelve, por cada usuario: saldo, si verificó el correo, fecha
+de registro y cuántos mensajes mandó con cada modelo. Para esto último se
+agregó un campo `modelo` al guardar cada respuesta del asistente en
+`messages` — antes no se guardaba, así que los mensajes de antes de este
+cambio no cuentan en el desglose por modelo (sí en el total, como
+`desconocido`). El link "Panel de admin" solo aparece en "Mi cuenta" para
+quien tenga `creditosIlimitados`.
 
 ### Streaming: se probó y se revirtió (25 de agosto de 2026)
 
@@ -350,7 +382,9 @@ una u otra, y la interfaz se adapta sola sin mostrar errores.
 | `POST` | `/api/instrucciones` | `{instrucciones}` · máx. 600 caracteres · se pegan al system prompt de cada chat |
 | `GET` | `/api/proyectos` | Lista los proyectos del usuario |
 | `POST` | `/api/proyectos` | `{nombre}` · máx. 60 caracteres · crea un proyecto |
+| `PUT` | `/api/proyectos/:id/instrucciones` | `{instrucciones}` · máx. 600 caracteres · propias del proyecto |
 | `DELETE` | `/api/proyectos/:id` | Borra el proyecto (sus mensajes quedan huérfanos, no se borran) |
+| `GET` | `/api/admin/usuarios` | Solo cuentas con `creditosIlimitados` · 403 para el resto |
 | `GET` | `/api/mensajes` | `?proyectoId=` opcional · historial visual (general si se omite) |
 | `POST` | `/api/chat` | `{message, modelo, proyectoId?, imagen?, documento?, archivoTexto?}` · 20 por minuto · 402 si no hay saldo |
 | `GET` | `/api/paquetes` | Catálogo, público |
