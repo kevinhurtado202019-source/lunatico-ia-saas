@@ -539,9 +539,19 @@
   /* Formato tipo Markdown en las respuestas: parrafos, listas, codigo... */
   .turno.ia .texto p { margin: 0 0 .85em; }
   .turno.ia .texto p:last-child { margin-bottom: 0; }
-  .turno.ia .texto ul, .turno.ia .texto ol { margin: .2em 0 .85em 1.3em; padding: 0; }
-  .turno.ia .texto li { margin-bottom: .3em; }
-  .turno.ia .texto li:last-child { margin-bottom: 0; }
+  .turno.ia .texto ol { margin: .2em 0 .85em 1.3em; padding: 0; }
+  .turno.ia .texto ol li { margin-bottom: .3em; }
+  .turno.ia .texto ol li:last-child { margin-bottom: 0; }
+
+  /* Las vinetas usan el logo animado en miniatura en vez del punto por defecto */
+  .turno.ia .texto ul { list-style: none; margin: .2em 0 .85em; padding: 0; }
+  .turno.ia .texto ul li {
+    display: flex; align-items: flex-start; gap: 8px; margin-bottom: .4em;
+  }
+  .turno.ia .texto ul li:last-child { margin-bottom: 0; }
+  .turno.ia .texto ul li .logo-punto {
+    width: 1.05em; height: 1.05em; flex: none; margin-top: .32em;
+  }
   .turno.ia .texto strong { font-weight: 700; color: var(--texto); }
   .turno.ia .texto code {
     font-family: var(--mono); font-size: .87em;
@@ -1647,6 +1657,11 @@
     var lineas = bruto.split('\n');
     var html = '';
     var i = 0;
+    // Cuenta seguida a lo largo de toda la respuesta: si el modelo interrumpe
+    // una lista numerada con vinetas o parrafos, cada tramo vuelve a "1." por
+    // su cuenta; usando nuestro propio contador (con el atributo value de
+    // <li>) la numeracion se ve correlativa de verdad: 1, 2, 3...
+    var contadorNumerado = 0;
     while (i < lineas.length) {
       var linea = lineas[i];
 
@@ -1665,7 +1680,10 @@
       if (esViñeta(linea)) {
         var items = [];
         while (i < lineas.length && esViñeta(lineas[i])) {
-          items.push('<li>' + enlinea(lineas[i].replace(/^\s*[-*]\s+/, '')) + '</li>');
+          items.push(
+            '<li>' + clonarLogo('logo-punto') +
+            '<span>' + enlinea(lineas[i].replace(/^\s*[-*]\s+/, '')) + '</span></li>'
+          );
           i++;
         }
         html += '<ul>' + items.join('') + '</ul>';
@@ -1675,7 +1693,11 @@
       if (esNumerada(linea)) {
         var itemsN = [];
         while (i < lineas.length && esNumerada(lineas[i])) {
-          itemsN.push('<li>' + enlinea(lineas[i].replace(/^\s*\d+[.)]\s+/, '')) + '</li>');
+          contadorNumerado++;
+          itemsN.push(
+            '<li value="' + contadorNumerado + '">' +
+            enlinea(lineas[i].replace(/^\s*\d+[.)]\s+/, '')) + '</li>'
+          );
           i++;
         }
         html += '<ol>' + itemsN.join('') + '</ol>';
@@ -1698,13 +1720,14 @@
   }
 
   // Clona el logo animado del header (mismo PNG, sin repetir el base64) para
-  // usarlo como indicador de "pensando" dentro del hilo, en vez de puntos.
-  function logoFlotante() {
+  // reusarlo como indicador de "pensando" y como marcador de las vinetas en
+  // vez de puntos sueltos.
+  function clonarLogo(claseExtra) {
     var origen = $('logoRespondiendo');
     if (!origen) return '';
     var clon = origen.cloneNode(true);
     clon.removeAttribute('id');
-    clon.classList.add('logo-pensando');
+    if (claseExtra) clon.classList.add(claseExtra);
     return clon.outerHTML;
   }
 
@@ -1721,7 +1744,7 @@
 
     var mio = turno('yo', 'Tú', mensaje);
     var esperando = turno('ia', 'LunaticoIA', null);
-    esperando.texto.innerHTML = '<span class="pensando">' + logoFlotante() + 'Pensando</span>';
+    esperando.texto.innerHTML = '<span class="pensando">' + clonarLogo('logo-pensando') + 'Pensando</span>';
 
     // Si el fetch revienta, la peticion nunca salio: devolvemos el texto al
     // campo y quitamos los turnos, para que reintentar sea pulsar Enter.
