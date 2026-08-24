@@ -101,6 +101,56 @@
   .btn.btn-luna-auto { background: var(--luna); color: #21180A; width: auto; }
 
   .hero { padding: clamp(56px, 11vw, 104px) 0 clamp(40px, 7vw, 68px); text-align: center; }
+
+  /* Esfera 3D del hero: la sombra/brillo queda fija (luz constante) y solo
+     gira la capa de crateres por dentro, con blend multiply. Asi se lee como
+     una esfera rotando de verdad y no como un disco plano girando. */
+  .hero-orbe {
+    position: relative;
+    width: clamp(150px, 26vw, 260px);
+    height: clamp(150px, 26vw, 260px);
+    margin: 0 auto clamp(20px, 4vw, 36px);
+    animation: orbe-flotar 7s ease-in-out infinite;
+  }
+  .orbe-brillo {
+    position: absolute; inset: -34%;
+    background: radial-gradient(closest-side, rgba(232,200,138,.32), transparent 72%);
+    filter: blur(6px);
+  }
+  .orbe-esfera {
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    overflow: hidden;
+    background: radial-gradient(circle at 32% 28%,
+      var(--luna-viva) 0%, var(--luna) 24%, #B98F4E 50%, #4A3520 76%, #1D140A 100%);
+    box-shadow:
+      0 22px 60px -14px rgba(232,200,138,.3),
+      inset -20px -20px 44px rgba(0,0,0,.55);
+  }
+  .orbe-crateres {
+    position: absolute; inset: -12%;
+    border-radius: 50%;
+    background-image:
+      radial-gradient(circle at 20% 30%, rgba(0,0,0,.3) 0 6%, transparent 7%),
+      radial-gradient(circle at 55% 60%, rgba(0,0,0,.24) 0 9%, transparent 10%),
+      radial-gradient(circle at 75% 25%, rgba(0,0,0,.2) 0 4%, transparent 5%),
+      radial-gradient(circle at 40% 82%, rgba(0,0,0,.22) 0 5%, transparent 6%),
+      radial-gradient(circle at 84% 68%, rgba(0,0,0,.18) 0 4%, transparent 5%);
+    mix-blend-mode: multiply;
+    animation: orbe-girar 24s linear infinite;
+  }
+  @keyframes orbe-flotar {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-10px); }
+  }
+  @keyframes orbe-girar {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .hero-orbe, .orbe-crateres { animation: none; }
+  }
+
   .hero h1 {
     font-family: var(--display); font-weight: 600;
     font-size: clamp(36px, 7.6vw, 62px); line-height: 1.03;
@@ -621,6 +671,10 @@
     </nav>
 
     <header class="hero">
+      <div class="hero-orbe" aria-hidden="true">
+        <div class="orbe-brillo"></div>
+        <div class="orbe-esfera"><div class="orbe-crateres"></div></div>
+      </div>
       <h1>IA sin suscripción,<br>y pagas con <em>Nequi</em>.</h1>
       <p class="bajada">
         Compra créditos cuando los necesites. No caducan, nadie te cobra el mes
