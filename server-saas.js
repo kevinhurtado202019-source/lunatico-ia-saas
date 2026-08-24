@@ -1163,6 +1163,30 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             messagesForClaude.shift();
         }
 
+        // Los adjuntos (imagen/PDF) quedan guardados en Mongo con su base64
+        // completo para que Claude los "recuerde" dentro de la ventana de
+        // historial -- pero volver a mandarlos TODOS en cada peticion, hasta
+        // MENSAJES_DE_HISTORIAL mensajes hacia atras, puede sumar decenas de
+        // MB si hubo varios adjuntos en la conversacion, y la API de Claude
+        // rechaza peticiones muy pesadas. Por eso solo se re-manda completo
+        // el adjunto MAS RECIENTE del historial; los demas se reducen a un
+        // texto plano -- el binario sigue intacto en Mongo, solo no se
+        // vuelve a mandar cada vez.
+        let yaSeMandoUnAdjuntoDelHistorial = false;
+        for (let i = messagesForClaude.length - 1; i >= 0; i--) {
+            const contenido = messagesForClaude[i].content;
+            if (!Array.isArray(contenido)) continue;
+            if (!yaSeMandoUnAdjuntoDelHistorial) {
+                yaSeMandoUnAdjuntoDelHistorial = true;
+                continue;
+            }
+            const textoBloque = (contenido.find((b) => b.type === 'text') || {}).text || '';
+            const tuvoImagen = contenido.some((b) => b.type === 'image');
+            const tuvoDocumento = contenido.some((b) => b.type === 'document');
+            const aviso = tuvoImagen ? '[imagen adjunta] ' : tuvoDocumento ? '[PDF adjunto] ' : '';
+            messagesForClaude[i].content = aviso + textoBloque;
+        }
+
         // La imagen/PDF van antes del texto (asi rinde mejor, segun la propia
         // guia de Anthropic) y como bloques, no como string; sin adjuntos se
         // manda el texto solo, igual que antes.

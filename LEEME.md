@@ -137,6 +137,31 @@ la creó, LunaticoIA responda con el nombre del dueño (Kevin David González
 Hurtado, de Neiva, Huila). Es una respuesta fija, no algo que el modelo deba
 inventar o adivinar.
 
+### El chat dejó de responder por acumular adjuntos en el historial (27 de agosto de 2026)
+
+Caso real: una cuenta que había probado varios adjuntos (imagen, PDF, docx,
+xlsx, zip) durante el día empezó a fallar hasta con un simple "hola" —
+`/api/chat` devolvía el error genérico de "No pudimos generar la respuesta".
+
+La causa: la función de "recordar imágenes entre turnos" de este mismo día
+guarda el adjunto completo (base64) en Mongo y lo vuelve a mandar cada vez
+que ese turno cae dentro de la ventana de `MENSAJES_DE_HISTORIAL` (30
+mensajes). Cada adjunto por separado tiene un tope razonable
+(`MAX_BASE64_IMAGEN`, etc.), pero nada topaba la suma de VARIOS adjuntos
+acumulados en 30 mensajes de historial — una cuenta que probó cinco tipos de
+archivo distintos en el mismo día terminaba mandando decenas de MB en cada
+petición, y la API de Claude la rechazaba.
+
+Arreglo: al armar el historial para Claude, solo se re-manda completo el
+adjunto MÁS RECIENTE; todos los adjuntos más viejos se reducen a un texto
+("[imagen adjunta]", "[PDF adjunto]") en esa misma petición — el binario
+sigue intacto en Mongo, solo no se vuelve a mandar cada vez. Es un recorte
+consciente: se pierde memoria de adjuntos viejos dentro de la conversación a
+cambio de que el chat no se caiga por acumulación. Si en el futuro hace
+falta recordar más de un adjunto a la vez de verdad, la solución de fondo es
+subirlos a la Files API de Anthropic (un `file_id` no pesa nada al
+re-mandarlo) en vez de guardar el binario cada vez.
+
 ### PWA — se puede instalar como app (27 de agosto de 2026)
 
 LunaticoIA se puede instalar desde el navegador como una PWA (Progressive
