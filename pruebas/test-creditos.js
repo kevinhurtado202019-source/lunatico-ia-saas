@@ -92,7 +92,7 @@ function eventoWompi(referencia, status, monto, secreto) {
 
     const st = await req('GET', '/api/stats', null, { Authorization: 'Bearer ' + tok });
     check('Stats muestra el saldo y los modelos',
-        st.status === 200 && st.body.creditBalance === 100 && st.body.modelos.length === 3,
+        st.status === 200 && st.body.creditBalance === 100 && st.body.modelos.length === 4,
         'modelos=' + (st.body.modelos || []).map((m) => m.clave + ':x' + m.multiplicador).join(' '));
 
     // --- Migración de usuario antiguo ---

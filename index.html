@@ -1904,7 +1904,13 @@
       '<div class="bloque">' +
         '<h3>Cómo se cobra</h3>' +
         '<p class="nota">Cada respuesta descuenta según los tokens que consume de verdad, no por mensaje. ' +
-        'Los modos Equilibrado y Avanzado usan modelos más potentes y gastan 3× y 5× respectivamente.</p>' +
+        (function () {
+          var potentes = modelos.filter(function (m) { return m.multiplicador > 1; })
+            .map(function (m) { return m.etiqueta + ' (' + m.multiplicador + '×)'; });
+          if (!potentes.length) return '';
+          return 'Los modos más potentes gastan más créditos: ' + potentes.join(', ') + '.';
+        })() +
+        '</p>' +
       '</div>' +
       '<button class="btn btn-borde" style="width:100%" onclick="salir()">Cerrar sesión</button>';
   }

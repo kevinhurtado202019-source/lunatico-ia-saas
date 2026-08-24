@@ -64,8 +64,8 @@ cambio se queda pendiente.
 
 ## Cómo se cobra
 
-En los tres modelos de Claude la salida cuesta exactamente cinco veces lo que
-la entrada, así que una sola fórmula sirve para todos:
+En los cuatro modelos de Claude la salida cuesta exactamente cinco veces lo
+que la entrada, así que una sola fórmula sirve para todos:
 
 ```
 facturables = tokens_entrada + (5 × tokens_salida)
@@ -73,14 +73,19 @@ facturables = tokens_entrada + (5 × tokens_salida)
 cobro       = (facturables / 1.000) × multiplicador_del_modelo
 ```
 
-| Modo | Modelo | Multiplicador |
-|---|---|---|
-| Rápido | `claude-haiku-4-5-20251001` | ×1 |
-| Equilibrado | `claude-sonnet-5` | ×3 |
-| Avanzado | `claude-opus-5` | ×5 |
+| Modo | Modelo | Precio de entrada (oficial) | Multiplicador |
+|---|---|---|---|
+| Rápido | `claude-haiku-4-5-20251001` | $1 / MTok | ×1 |
+| Equilibrado | `claude-sonnet-5` | $2 / MTok | ×3 |
+| Avanzado | `claude-opus-5` | $5 / MTok | ×5 |
+| Máximo | `claude-fable-5` | $10 / MTok | ×10 |
 
-Los multiplicadores siguen la proporción de precios de entrada (1 : 3 : 5), así
-que **el margen es idéntico use el usuario el modelo que use**.
+Los multiplicadores siguen la proporción de precios de entrada tomando Rápido
+como base (×1 por cada $1/MTok), así que **el margen es idéntico use el
+usuario el modelo que use** — con una excepción: **Equilibrado quedó en ×3
+desde antes de que Sonnet bajara de precio** (a $2/MTok le tocaría ×2). No se
+corrigió al agregar Máximo porque bajarlo cambiaría el cobro de cuentas que ya
+vienen usándolo; si se ajusta algún día, que sea a propósito y no de paso.
 
 El cobro ocurre **después** de una respuesta correcta. Si la API falla, no se
 descuenta saldo.

@@ -48,10 +48,15 @@ const claudeClient = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY });
 const TOKENS_POR_CREDITO = 1000;
 const PESO_SALIDA = 5;
 
+// Multiplicadores = precio de entrada de cada modelo dividido entre el de
+// Rápido (Haiku, $1/MTok): Sonnet $2, Opus $5, Fable $10 -> 1 : 2(*) : 5 : 10.
+// (*) Equilibrado quedó en 3x desde antes de que Sonnet bajara de precio; no
+// se toca aca porque cambiar eso afecta el margen de cuentas ya existentes.
 const MODELOS = {
     rapido:   { id: 'claude-haiku-4-5-20251001',  multiplicador: 1, etiqueta: 'Rápido'   },
     equilibrado: { id: 'claude-sonnet-5', multiplicador: 3, etiqueta: 'Equilibrado' },
-    avanzado: { id: 'claude-opus-5',      multiplicador: 5, etiqueta: 'Avanzado' }
+    avanzado: { id: 'claude-opus-5',      multiplicador: 5, etiqueta: 'Avanzado' },
+    maximo:   { id: 'claude-fable-5',     multiplicador: 10, etiqueta: 'Máximo' }
 };
 const MODELO_POR_DEFECTO = 'rapido';
 
