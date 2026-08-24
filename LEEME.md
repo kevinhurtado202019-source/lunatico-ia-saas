@@ -42,19 +42,20 @@ WOMPI_EVENTS_SECRET
 ```
 
 **Para el correo** (verificar cuentas nuevas y recuperar contraseña). Sin las
-tres, las cuentas quedan verificadas de entrada como siempre (nadie se
+dos, las cuentas quedan verificadas de entrada como siempre (nadie se
 bloquea), `/api/olvide-password` responde 503 y no se manda ningún correo.
 
 ```
-SMTP_HOST
-SMTP_USER
-SMTP_PASS
-SMTP_FROM     Opcional. Si falta, se usa SMTP_USER como remitente.
-SMTP_PORT     Opcional. 587 por defecto; 465 activa TLS implícito.
+RESEND_API_KEY
+SMTP_FROM       Remitente, p.ej. "LunaticoIA <noreply@lunaticoia.uk>"
 ```
 
-Sirve cualquier proveedor SMTP normal (una cuenta de Gmail con contraseña de
-aplicación, Brevo, Mailgun, etc.) — no hay nada específico de un proveedor.
+Se manda por la API HTTP de Resend (`api.resend.com`, puerto 443), no por su
+relay SMTP: Railway bloquea el tráfico saliente por los puertos 25/465/587,
+así que un envío por SMTP se queda intentando conectar hasta agotar el tiempo
+de espera aunque las credenciales sean correctas. Confirmado a mano desde la
+consola de Railway: `smtp.resend.com` no respondía en ningún puerto SMTP,
+pero `api.resend.com:443` sí.
 
 En Railway, editar una variable **no basta**: hay que pulsar **Deploy** o el
 cambio se queda pendiente.
@@ -134,11 +135,11 @@ que antes estaban escritas a mano para Linux: usa el chromium del contenedor
 si existe y si no deja que Playwright busque el suyo, y guarda las capturas en
 `pruebas/capturas/` en vez de en una ruta absoluta.
 
-**Ninguna prueba define las variables `SMTP_*`**, así que corren con el correo
+**Ninguna prueba define `RESEND_API_KEY`**, así que corren con el correo
 apagado: las cuentas nacen verificadas y el filtro de `/api/chat` no se activa.
-Si algún día se añade SMTP al entorno de pruebas, los casos de chat empezarán a
-dar 403 hasta que el guion verifique la cuenta primero. No está roto: es que el
-filtro hace su trabajo.
+Si algún día se añade esa variable al entorno de pruebas, los casos de chat
+empezarán a dar 403 hasta que el guion verifique la cuenta primero. No está
+roto: es que el filtro hace su trabajo.
 
 ---
 
@@ -165,14 +166,22 @@ que desborda por arriba. Para anclar contenido abajo, `margin-top: auto` en el
 hijo.
 
 **El correo sigue el mismo patrón que Wompi: se apaga solo si falta config.**
-`CORREO_CONFIGURADO` decide todo. Sin SMTP, las cuentas nuevas nacen
-`emailVerified: true` y las viejas se migran igual (`asegurarVerificado`, calco
-de `asegurarSaldo`) — nadie queda bloqueado por accidente el día que se
-despliegue esto sin haber configurado el SMTP todavía.
+`CORREO_CONFIGURADO` decide todo. Sin `RESEND_API_KEY`, las cuentas nuevas
+nacen `emailVerified: true` y las viejas se migran igual (`asegurarVerificado`,
+calco de `asegurarSaldo`) — nadie queda bloqueado por accidente el día que se
+despliegue esto sin haber configurado el correo todavía.
+
+**El correo se manda por la API HTTP de Resend, no por su relay SMTP.**
+Railway bloquea el tráfico saliente por los puertos 25/465/587, así que con
+nodemailer + `smtp.resend.com` cada envío se quedaba esperando la conexión
+hasta hacer timeout — con las credenciales correctas y todo. La API HTTP usa
+el puerto 443, que sí está abierto. Se llama con el módulo `https` nativo
+(`llamarResendAPI()`) en vez del paquete `resend`, porque ese paquete pide
+Node 20 y aquí se corre Node 14 (ver "Lo que falta").
 
 **El correo nunca debe tumbar una petición.** `enviarCorreo()` atrapa sus
-propios errores y devuelve `false`; si el proveedor SMTP falla, el registro o
-la recuperación igual responden bien. Si alguna vez se necesita saber si el
+propios errores y devuelve `false`; si Resend falla, el registro o la
+recuperación igual responden bien. Si alguna vez se necesita saber si el
 correo salió, hay que leerlo del valor de retorno, no de una excepción.
 
 **`/api/olvide-password` responde lo mismo exista o no la cuenta.** Es
@@ -194,9 +203,12 @@ va a pagar.
    mismo problema que el del nombre del comercio.
 3. Poner las tres llaves de Wompi y configurar el webhook.
 4. Un pago de prueba de punta a punta.
-5. Poner las variables `SMTP_*` en Railway (ver arriba) para activar la
+5. Poner `RESEND_API_KEY` en Railway (ver arriba) para activar la
    verificación de correo y la recuperación de contraseña — el código ya está,
-   pero sin esas variables queda apagado igual que Wompi sin sus llaves.
+   pero sin esa variable queda apagado igual que Wompi sin sus llaves. (Antes
+   había variables `SMTP_*` con las credenciales de Resend, pero por SMTP
+   nunca llegaban a conectar porque Railway bloquea esos puertos — ver
+   "Cosas que conviene no romper".)
 
 Y sin prisa: respaldos de la base, alojar las tipografías en el servidor, subir
 de Node 14 a Node 20, e historial de conversaciones.

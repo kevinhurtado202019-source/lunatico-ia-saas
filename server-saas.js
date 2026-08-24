@@ -11,7 +11,7 @@ const jwt = require('jsonwebtoken');
 const bcryptjs = require('bcryptjs');
 const Anthropic = require('@anthropic-ai/sdk');
 const { MongoClient, ObjectId } = require('mongodb');
-const nodemailer = require('nodemailer');
+const https = require('https');
 
 // Fail fast si falta configuración crítica
 const REQUIRED_ENV = ['MONGODB_URI', 'JWT_SECRET', 'CLAUDE_API_KEY'];
@@ -158,26 +158,19 @@ function firmaIntegridad(referencia, montoEnCentavos, moneda) {
 // ---------------------------------------------------------------------------
 // Correo (verificación de cuenta y recuperación de contraseña)
 //
-// Mismo patrón que Wompi: si no hay SMTP configurado, la funcionalidad se
+// Mismo patrón que Wompi: si no hay Resend configurado, la funcionalidad se
 // apaga sola en vez de romper el resto de la app. Sin correo configurado,
 // las cuentas nuevas quedan verificadas de entrada (como siempre) y
 // /api/olvide-password responde 503, igual que /api/comprar sin Wompi.
+//
+// Se usa la API HTTP de Resend (puerto 443) en vez de su relay SMTP: Railway
+// bloquea el tráfico saliente por los puertos 25/465/587, así que el envío
+// por SMTP nunca llegaba a conectar (timeout) aunque las credenciales fueran
+// correctas.
 // ---------------------------------------------------------------------------
 
-const CORREO_CONFIGURADO = Boolean(
-    process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS
-);
-
-const transportadorCorreo = CORREO_CONFIGURADO
-    ? nodemailer.createTransport({
-          host: process.env.SMTP_HOST,
-          port: Number(process.env.SMTP_PORT) || 587,
-          secure: Number(process.env.SMTP_PORT) === 465,
-          auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-      })
-    : null;
-
-const CORREO_REMITENTE = process.env.SMTP_FROM || process.env.SMTP_USER;
+const CORREO_CONFIGURADO = Boolean(process.env.RESEND_API_KEY);
+const CORREO_REMITENTE = process.env.SMTP_FROM;
 const VENCIMIENTO_VERIFICACION_MS = 24 * 60 * 60 * 1000;
 const VENCIMIENTO_RESET_MS = 60 * 60 * 1000;
 
@@ -185,6 +178,40 @@ function escHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
         { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
     ));
+}
+
+// Node 14 (la versión que corre en Railway) no trae fetch global, así que se
+// llama a la API de Resend con el módulo https del propio Node.
+function llamarResendAPI(payload) {
+    return new Promise((resolve, reject) => {
+        const datos = JSON.stringify(payload);
+        const peticion = https.request(
+            {
+                hostname: 'api.resend.com',
+                path: '/emails',
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(datos)
+                }
+            },
+            (res) => {
+                let cuerpo = '';
+                res.on('data', (trozo) => { cuerpo += trozo; });
+                res.on('end', () => {
+                    if (res.statusCode >= 200 && res.statusCode < 300) {
+                        resolve();
+                    } else {
+                        reject(new Error(`Resend respondió ${res.statusCode}: ${cuerpo}`));
+                    }
+                });
+            }
+        );
+        peticion.on('error', reject);
+        peticion.write(datos);
+        peticion.end();
+    });
 }
 
 // Nunca deja que un correo que falla tumbe la petición que lo disparó
@@ -195,13 +222,7 @@ async function enviarCorreo(destinatario, asunto, textoPlano, html) {
         return false;
     }
     try {
-        await transportadorCorreo.sendMail({
-            from: CORREO_REMITENTE,
-            to: destinatario,
-            subject: asunto,
-            text: textoPlano,
-            html
-        });
+        await llamarResendAPI({ from: CORREO_REMITENTE, to: destinatario, subject: asunto, text: textoPlano, html });
         return true;
     } catch (error) {
         console.error('✗ Error enviando correo:', error.message);
