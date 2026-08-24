@@ -128,7 +128,7 @@
 
   .hero {
     position: relative; overflow: hidden;
-    padding: clamp(64px, 12vw, 116px) 0 clamp(40px, 7vw, 68px); text-align: center;
+    padding: clamp(76px, 13vw, 148px) 0 clamp(40px, 7vw, 68px); text-align: center;
   }
 
   /* Fondo cosmico del hero: cielo con estrellas y la luna 3D, en WebGL real.
@@ -1098,10 +1098,12 @@
   escena.add(estrellas);
 
   // La luna va arriba del todo, parcialmente recortada por el marco (asi se
-  // ve intencional, no como si no cupiera) y su tamano se recalcula segun
-  // el alto visible para que el borde inferior nunca invada la zona del
-  // titular: ese contraste extra tambien lo respalda el degradado radial
-  // detras del texto, por si el aspecto del contenedor es muy angosto.
+  // ve intencional, no como si no cupiera). En vez de una fraccion fija del
+  // alto de la camara (que no sabe donde cae el titular de verdad), se mide
+  // la posicion real de .hero-contenido y se calcula el radio para que el
+  // borde inferior quede justo encima, con un respiro chico. Eso tambien lo
+  // respalda el degradado radial detras del texto, por si algo se desajusta.
+  var contenido = document.querySelector('.hero-contenido');
   function ajustarTamano() {
     var ancho = contenedor.clientWidth || 320;
     var alto = contenedor.clientHeight || 320;
@@ -1111,15 +1113,33 @@
     camara.updateProjectionMatrix();
 
     var mitadAltoVisible = Math.tan((camara.fov * Math.PI / 180) / 2) * camara.position.z;
-    var radio = Math.max(0.75, Math.min(mitadAltoVisible * 0.34, 1.7));
+    var pxPorUnidad = alto / (2 * mitadAltoVisible);
+
+    var margenPx = contenido
+      ? contenido.getBoundingClientRect().top - contenedor.getBoundingClientRect().top
+      : alto * 0.2;
+    var bordeInferiorPx = Math.max(30, margenPx - 14);
+    var diametroPx = Math.max(90, Math.min(bordeInferiorPx * 1.5, alto * 0.55));
+    var radio = (diametroPx / 2) / pxPorUnidad;
     esfera.scale.setScalar(radio);
     halo.scale.setScalar(radio);
-    var y = mitadAltoVisible - radio * 0.5;
+
+    var centroPx = bordeInferiorPx - diametroPx / 2;
+    var y = mitadAltoVisible - (centroPx / pxPorUnidad);
     esfera.position.set(0, y, 0);
     halo.position.copy(esfera.position);
   }
   ajustarTamano();
   window.addEventListener('resize', ajustarTamano);
+  // Las fuentes web (Fraunces/Public Sans) pueden cambiar la altura del
+  // hero despues de la primera medicion, y eso no dispara 'resize'. Se
+  // recalcula cuando terminan de cargar y una vez mas tras un respiro
+  // corto por si el layout se sigue acomodando (imagenes, otros recursos).
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(ajustarTamano).catch(function () {});
+  }
+  setTimeout(ajustarTamano, 400);
+  setTimeout(ajustarTamano, 1200);
 
   canvas.classList.remove('oculto');
   if (fallback) fallback.classList.add('oculto');
