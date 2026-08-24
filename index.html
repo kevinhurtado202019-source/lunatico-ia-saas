@@ -100,28 +100,42 @@
   /* Mas especifico que .btn-luna, que se define despues y traeria width:100% */
   .btn.btn-luna-auto { background: var(--luna); color: #21180A; width: auto; }
 
-  .hero { padding: clamp(56px, 11vw, 104px) 0 clamp(40px, 7vw, 68px); text-align: center; }
+  .hero {
+    position: relative; overflow: hidden;
+    padding: clamp(64px, 12vw, 116px) 0 clamp(40px, 7vw, 68px); text-align: center;
+  }
 
-  /* Esfera 3D del hero: la sombra/brillo queda fija (luz constante) y solo
-     gira la capa de crateres por dentro, con blend multiply. Asi se lee como
-     una esfera rotando de verdad y no como un disco plano girando. */
+  /* Fondo cosmico del hero: cielo con estrellas y la luna 3D, en WebGL real.
+     La sombra/brillo de la esfera queda fija (luz constante) y solo gira la
+     capa de crateres por dentro, asi se lee como una esfera rotando de
+     verdad y no como un disco plano girando. Un degradado hacia --noche en
+     la parte baja mantiene el titular legible encima. */
+  .hero-fondo {
+    position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  }
+  .hero-fondo::after {
+    content: ""; position: absolute; inset: 0;
+    background:
+      radial-gradient(62% 58% at 50% 64%, rgba(11,14,23,.82), transparent 72%),
+      linear-gradient(180deg, transparent 0%, transparent 18%, var(--noche) 86%);
+  }
+  .fondo-canvas {
+    position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+  }
+  .hero-contenido { position: relative; z-index: 1; }
+
+  /* Fallback si WebGL o el CDN de Three.js fallan: la luna sola en CSS puro. */
   .hero-orbe {
-    position: relative;
+    position: absolute; left: 50%; top: 2%;
     width: clamp(150px, 26vw, 260px);
     height: clamp(150px, 26vw, 260px);
-    margin: 0 auto clamp(20px, 4vw, 36px);
+    transform: translateX(-50%);
     animation: orbe-flotar 7s ease-in-out infinite;
   }
   .orbe-brillo {
     position: absolute; inset: -34%;
     background: radial-gradient(closest-side, rgba(232,200,138,.32), transparent 72%);
     filter: blur(6px);
-  }
-  .orbe-canvas {
-    position: absolute; inset: 0;
-    width: 100%; height: 100%;
-    display: block;
-    border-radius: 50%;
   }
   .orbe-esfera {
     position: absolute; inset: 0;
@@ -677,21 +691,25 @@
     </nav>
 
     <header class="hero">
-      <div class="hero-orbe" aria-hidden="true">
-        <div class="orbe-brillo"></div>
-        <canvas id="orbeCanvas" class="orbe-canvas oculto"></canvas>
-        <div class="orbe-esfera" id="orbeFallback"><div class="orbe-crateres"></div></div>
+      <div class="hero-fondo" aria-hidden="true">
+        <canvas id="fondoCanvas" class="fondo-canvas oculto"></canvas>
+        <div class="hero-orbe" id="orbeFallback">
+          <div class="orbe-brillo"></div>
+          <div class="orbe-esfera"><div class="orbe-crateres"></div></div>
+        </div>
       </div>
-      <h1>IA sin suscripción,<br>y pagas con <em>Nequi</em>.</h1>
-      <p class="bajada">
-        Compra créditos cuando los necesites. No caducan, nadie te cobra el mes
-        siguiente, y no hace falta tarjeta internacional.
-      </p>
-      <div class="hero-botones">
-        <button class="btn btn-luna btn-luna-auto" onclick="irAcceso('crear')">Probar con 100 créditos gratis</button>
-        <button class="btn btn-borde" onclick="document.getElementById('precios').scrollIntoView({behavior:'smooth'})">Ver precios</button>
+      <div class="hero-contenido">
+        <h1>IA sin suscripción,<br>y pagas con <em>Nequi</em>.</h1>
+        <p class="bajada">
+          Compra créditos cuando los necesites. No caducan, nadie te cobra el mes
+          siguiente, y no hace falta tarjeta internacional.
+        </p>
+        <div class="hero-botones">
+          <button class="btn btn-luna btn-luna-auto" onclick="irAcceso('crear')">Probar con 100 créditos gratis</button>
+          <button class="btn btn-borde" onclick="document.getElementById('precios').scrollIntoView({behavior:'smooth'})">Ver precios</button>
+        </div>
+        <p class="letra-chica">Sin tarjeta para empezar · Sin cobros automáticos</p>
       </div>
-      <p class="letra-chica">Sin tarjeta para empezar · Sin cobros automáticos</p>
     </header>
 
     <div class="pilares">
@@ -927,15 +945,16 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
-// Esfera 3D del hero con iluminacion real (WebGL). Si el CDN falla o el
-// navegador no soporta WebGL, se queda la luna en CSS puro que ya estaba
-// ahi de entrada (progressive enhancement, nunca se ve un hueco vacio).
+// Fondo cosmico del hero con WebGL real: estrellas + luna con iluminacion
+// de verdad. Si el CDN de Three.js falla o el navegador no soporta WebGL,
+// se queda la luna en CSS puro que ya estaba ahi de entrada (progressive
+// enhancement, nunca se ve un hueco vacio).
 (function () {
   'use strict';
   if (typeof THREE === 'undefined') return;
 
-  var contenedor = document.querySelector('.hero-orbe');
-  var canvas = document.getElementById('orbeCanvas');
+  var contenedor = document.querySelector('.hero-fondo');
+  var canvas = document.getElementById('fondoCanvas');
   var fallback = document.getElementById('orbeFallback');
   if (!contenedor || !canvas) return;
 
@@ -949,8 +968,8 @@
   }
 
   var escena = new THREE.Scene();
-  var camara = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
-  camara.position.set(0, 0, 6.2);
+  var camara = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
+  camara.position.set(0, 0, 7.5);
 
   // Superficie con crateres generada en un canvas 2D, sin archivos externos.
   function generarTextura() {
@@ -972,17 +991,35 @@
     return new THREE.CanvasTexture(c);
   }
 
+  // Punto redondo y suave para las estrellas: sin esto, THREE.PointsMaterial
+  // dibuja cuadrados solidos en vez de brillitos.
+  function generarTexturaEstrella() {
+    var tam = 32;
+    var c = document.createElement('canvas');
+    c.width = tam; c.height = tam;
+    var ctx = c.getContext('2d');
+    var g = ctx.createRadialGradient(tam / 2, tam / 2, 0, tam / 2, tam / 2, tam / 2);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.35, 'rgba(255,255,255,.7)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, tam, tam);
+    return new THREE.CanvasTexture(c);
+  }
+
+  // La geometria queda con radio 1 y el tamano real se ajusta despues con
+  // .scale, recalculado en cada resize segun el alto visible de la camara.
+  // Asi la luna siempre cabe en el encuadre sin recortarse, sea cual sea
+  // el aspecto del contenedor (movil angosto o escritorio ancho).
   var esfera = new THREE.Mesh(
-    new THREE.SphereGeometry(1.3, 64, 64),
+    new THREE.SphereGeometry(1, 64, 64),
     new THREE.MeshStandardMaterial({ map: generarTextura(), roughness: 0.92, metalness: 0.05 })
   );
   escena.add(esfera);
 
   // Halo tipo atmosfera: esfera un poco mas grande, cara interna, aditivo.
-  // Radio calculado para que quepa dentro del angulo visible de la camara
-  // (32deg de FOV a distancia 6.2 dejan ~1.78 unidades de mitad de ancho).
   var halo = new THREE.Mesh(
-    new THREE.SphereGeometry(1.42, 48, 48),
+    new THREE.SphereGeometry(1.09, 48, 48),
     new THREE.MeshBasicMaterial({
       color: 0xE8C88A, transparent: true, opacity: 0.16,
       side: THREE.BackSide, blending: THREE.AdditiveBlending
@@ -998,12 +1035,53 @@
   luzTenue.position.set(3, -1.5, -2);
   escena.add(luzTenue);
 
+  // Campo de estrellas: puntos dispersos en una esfera grande alrededor de
+  // la camara, con brillo y tamano variables para que no se vean uniformes.
+  var N_ESTRELLAS = 260;
+  var posiciones = new Float32Array(N_ESTRELLAS * 3);
+  var colores = new Float32Array(N_ESTRELLAS * 3);
+  var colorFrio = new THREE.Color(0xA9C0FF);
+  var colorCalido = new THREE.Color(0xF2D9A6);
+  for (var i = 0; i < N_ESTRELLAS; i++) {
+    var theta = Math.random() * Math.PI * 2;
+    var phi = Math.acos(Math.random() * 2 - 1);
+    var radio = 7 + Math.random() * 7;
+    posiciones[i * 3]     = radio * Math.sin(phi) * Math.cos(theta);
+    posiciones[i * 3 + 1] = Math.abs(radio * Math.cos(phi) * 0.6) + 0.4;
+    posiciones[i * 3 + 2] = radio * Math.sin(phi) * Math.sin(theta) - 4;
+    var mezcla = colorFrio.clone().lerp(colorCalido, Math.random());
+    colores[i * 3] = mezcla.r; colores[i * 3 + 1] = mezcla.g; colores[i * 3 + 2] = mezcla.b;
+  }
+  var geometriaEstrellas = new THREE.BufferGeometry();
+  geometriaEstrellas.setAttribute('position', new THREE.BufferAttribute(posiciones, 3));
+  geometriaEstrellas.setAttribute('color', new THREE.BufferAttribute(colores, 3));
+  var estrellas = new THREE.Points(geometriaEstrellas, new THREE.PointsMaterial({
+    map: generarTexturaEstrella(), size: 0.14, vertexColors: true,
+    transparent: true, opacity: 0.95, sizeAttenuation: true,
+    depthWrite: false, blending: THREE.AdditiveBlending
+  }));
+  escena.add(estrellas);
+
+  // La luna va arriba del todo, parcialmente recortada por el marco (asi se
+  // ve intencional, no como si no cupiera) y su tamano se recalcula segun
+  // el alto visible para que el borde inferior nunca invada la zona del
+  // titular: ese contraste extra tambien lo respalda el degradado radial
+  // detras del texto, por si el aspecto del contenedor es muy angosto.
   function ajustarTamano() {
-    var lado = contenedor.clientWidth || 260;
-    renderer.setSize(lado, lado, false);
+    var ancho = contenedor.clientWidth || 320;
+    var alto = contenedor.clientHeight || 320;
+    renderer.setSize(ancho, alto, false);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    camara.aspect = 1;
+    camara.aspect = ancho / alto;
     camara.updateProjectionMatrix();
+
+    var mitadAltoVisible = Math.tan((camara.fov * Math.PI / 180) / 2) * camara.position.z;
+    var radio = Math.max(0.75, Math.min(mitadAltoVisible * 0.34, 1.7));
+    esfera.scale.setScalar(radio);
+    halo.scale.setScalar(radio);
+    var y = mitadAltoVisible - radio * 0.5;
+    esfera.position.set(0, y, 0);
+    halo.position.copy(esfera.position);
   }
   ajustarTamano();
   window.addEventListener('resize', ajustarTamano);
@@ -1014,8 +1092,9 @@
   var animando = !reducirMovimiento;
   function animar() {
     if (animando) {
-      esfera.rotation.y += 0.0028;
-      halo.rotation.y -= 0.0009;
+      esfera.rotation.y += 0.0026;
+      halo.rotation.y -= 0.0008;
+      estrellas.rotation.y += 0.00016;
       requestAnimationFrame(animar);
     }
     renderer.render(escena, camara);
