@@ -507,9 +507,15 @@ app.use((req, res, next) => {
     next();
 });
 
+// manifest.json y sw.js son los dos únicos .json/.js que sí hacen falta
+// servir de verdad (los necesita la PWA) -- todo lo demás con esas
+// extensiones sigue bloqueado para no exponer server-saas.js, package.json,
+// este mismo archivo, etc.
+const PERMITIDOS_PWA = new Set(['/manifest.json', '/sw.js']);
 const BLOQUEADOS = /\.(js|json|md|bat|ps1|lock|yml|yaml)$/i;
 app.use((req, res, next) => {
     if (req.path.startsWith('/api/')) return next();
+    if (PERMITIDOS_PWA.has(req.path)) return next();
     if (BLOQUEADOS.test(req.path)) return res.status(404).end();
     next();
 });

@@ -10,15 +10,13 @@ Backend y frontend de la plataforma. Estado al 23 de agosto de 2026.
 |---|---|
 | `server-saas.js` | El backend completo. Es el que arranca Railway (`npm start`). |
 | `index.html` | Landing, acceso y aplicación de chat, todo en un archivo. Lo sirve el propio backend. |
+| `manifest.json` | Configuración de la PWA (nombre, colores, íconos). |
+| `sw.js` | Service worker de la PWA — red primero, cache solo de respaldo. |
+| `icons/` | Íconos de la PWA en varios tamaños, generados del logo real. |
 | `package.json` | Dependencias. |
 | `mensaje-soporte-wompi.txt` | Mensaje listo para pegar en el chat de soporte de Wompi. |
 | `pruebas/` | La batería de pruebas. Ver más abajo. |
 | `HACER-TODO.bat` | Doble clic: instala dependencias y guarda el código en git. |
-
-> Estos dos archivos son los que están desplegados en producción, salvo el
-> último lote de cambios (errores saneados, sincronización entre pestañas,
-> alto en móvil, verificación de correo y recuperación de contraseña), que
-> quedó pendiente de subir a GitHub.
 
 ---
 
@@ -138,6 +136,44 @@ guardado, exportado o descargado en su equipo.
 la creó, LunaticoIA responda con el nombre del dueño (Kevin David González
 Hurtado, de Neiva, Huila). Es una respuesta fija, no algo que el modelo deba
 inventar o adivinar.
+
+### PWA — se puede instalar como app (27 de agosto de 2026)
+
+LunaticoIA se puede instalar desde el navegador como una PWA (Progressive
+Web App): ícono propio en la pantalla de inicio, se abre sin la barra de
+Chrome, como cualquier otra app. Es el mismo sitio de siempre, sin
+reescribir nada — es el camino recomendado por Google para "tengo una web,
+la quiero como app", y el paso previo a empacarla como TWA (Trusted Web
+Activity) para subirla a Play Store el día que se quiera.
+
+Piezas nuevas:
+- `manifest.json` — nombre, colores, y los íconos de la app.
+- `sw.js` — service worker mínimo: **red primero, la cache es solo un
+  respaldo si no hay conexión**. Nunca cachea `/api/*` (esos datos siempre
+  tienen que ser reales) y nunca sirve una versión vieja de la app teniendo
+  internet — importante porque este proyecto se despliega muy seguido.
+- `icons/` — 3 íconos generados a partir del logo real de la marca (las
+  capas `marca-logo-cintas` + `marca-logo-l` que ya usaba el header,
+  compuestas y escaladas con Pillow): `icon-192.png`, `icon-512.png`, y
+  `icon-maskable-512.png` (con más espacio alrededor, para que Android no
+  le corte el logo al recortarlo en círculo).
+
+**Ojo con el bloqueo de archivos fuente.** `server-saas.js` tiene un
+middleware que bloquea con 404 cualquier `.js`/`.json`/`.md`/etc. para que
+nadie pueda pedir `server-saas.js` o `package.json` directamente. Ese mismo
+bloqueo también tapaba `manifest.json` y `sw.js` sin querer — se agregó
+`PERMITIDOS_PWA`, una lista blanca de exactamente esas dos rutas, antes del
+bloqueo general. El resto de `.js`/`.json` del proyecto sigue 404 igual que
+antes (verificado con pruebas).
+
+**No se pudo confirmar visualmente que el service worker se registra bien**
+en el navegador de pruebas de este entorno (da "unknown error" al hacerlo,
+algo que parece una restricción del sandbox de esa herramienta y no del
+código — el manifest, el `sw.js` y los íconos sí se verificaron servidos
+correctamente, con el `Content-Type` correcto, y `node --check sw.js` no
+marca ningún error de sintaxis). La confirmación real necesita probarlo en
+un Chrome de verdad — buscar el ícono de instalar en la barra de
+direcciones, o en Android el aviso de "Agregar a pantalla de inicio".
 
 ### La IA no buscaba en internet aunque tenía la herramienta (27 de agosto de 2026)
 
