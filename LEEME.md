@@ -285,35 +285,33 @@ conviene probar primero actualizar `@anthropic-ai/sdk` a una versión
 reciente, ya que la instalada es bastante vieja para las funciones que ya
 usa este proyecto (herramientas, modelos nuevos).
 
-### `@anthropic-ai/sdk` actualizado a 0.120.0 (26 de agosto de 2026)
+### `@anthropic-ai/sdk`: intento de actualizar a 0.120.0, revertido (26 de agosto de 2026)
 
-Seguía en `^0.20.0` (instalada 0.20.9, de mediados de 2024) — de antes de que
-existieran los modelos y herramientas que ya usa este proyecto. Se subió a
-`^0.120.0` (la última en ese momento) **sin volver a activar streaming**: el
-código sigue en `claudeClient.messages.create(...)`, exactamente como quedó
-tras el revert de arriba. Este cambio por sí solo es de bajo riesgo porque no
-toca la ruta que rompió producción la vez pasada.
+Se intentó subir de `^0.20.0` (instalada 0.20.9, de mediados de 2024) a
+`^0.120.0`, sin volver a activar streaming (seguía en
+`claudeClient.messages.create(...)`). Pasó las 5 suites de pruebas en local,
+incluida la que pega de verdad a la API con una clave inválida. Se desplegó.
 
-Verificación antes de desplegar: las 19 pruebas de `test-creditos.js`
-(incluida la que pega de verdad a la API con una clave inválida, sin doble
-del SDK) más las otras 4 suites, todas en verde.
+**Producción quedó caída: 502 "Application failed to respond".** El
+contenedor no llegó ni a levantar el servidor — a diferencia del incidente
+del streaming (que sí respondía, solo que con el mensaje de error), esta vez
+Railway ni siquiera pudo conectarse a la app. La sospecha más probable es que
+el build no instaló bien alguna de las dependencias nuevas que trae el SDK
+0.120.0 (`standardwebhooks`, `json-schema-to-ts`), pero no se confirmó la
+causa exacta porque, otra vez, no había acceso a los logs de Railway en el
+momento del fallo.
 
-**Nota sobre un crash al final de `test-creditos.js` en Windows:** después de
-que las 19 pruebas pasan, a veces aparece
-`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c`
-justo al salir del proceso. Es un bug de limpieza de conexiones (libuv/undici)
-específico de Windows — el path del archivo lo delata (`src\win\async.c`) — y
-solo pasa en esta prueba porque es la única que hace una llamada HTTPS de
-verdad (con una clave falsa, a propósito, para provocar el fallo). No pasa en
-ninguna de las otras 4 pruebas (que usan un doble del SDK y nunca abren una
-conexión real), y no debería pasar en Railway (Linux, y el servidor real
-nunca llama a `process.exit()`). No afecta el resultado: las 19 aserciones ya
-corrieron y dieron bien antes del crash. Si algún día se ve el mismo tipo de
-crash en Railway, ahí sí habría que investigarlo en serio.
+Se revirtió `package.json`/`package-lock.json` al `@anthropic-ai/sdk@0.20.9`
+de siempre para restaurar el servicio de inmediato.
 
-Con el SDK al día, si se quiere retomar streaming en el futuro, ya no
-quedaría esa duda de "¿será por lo viejo que está el SDK?" como variable —
-solo faltaría conseguir logs de Railway antes del próximo intento.
+**Lección para la próxima vez:** ni pasar las 5 pruebas locales ni una
+llamada real (con clave inválida) a la API alcanzan para confirmar que un
+cambio de dependencia va a arrancar bien en el contenedor real de Railway —
+esto prueba que el problema puede estar en el *build/arranque*, no solo en
+el comportamiento en tiempo de ejecución. Antes de volver a intentar esto,
+conseguir acceso a los logs de build y de arranque de Railway (o pedirle al
+dueño que los revise en cuanto se despliegue), en vez de asumir que "arrancó
+bien en mi máquina" es suficiente garantía.
 
 ### Botón de descargar código
 
