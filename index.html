@@ -131,19 +131,19 @@
     padding: clamp(76px, 13vw, 148px) 0 clamp(40px, 7vw, 68px); text-align: center;
   }
 
-  /* Fondo cosmico del hero: cielo con estrellas y la luna 3D, en WebGL real.
-     La sombra/brillo de la esfera queda fija (luz constante) y solo gira la
-     capa de crateres por dentro, asi se lee como una esfera rotando de
-     verdad y no como un disco plano girando. Un degradado hacia --noche en
-     la parte baja mantiene el titular legible encima. */
+  /* Fondo cosmico de toda la pagina (landing y app por igual): cielo con
+     estrellas y la luna 3D en WebGL real, fijo a la ventana, igual que el
+     cielo sutil y la aurora de mas arriba (mismo z-index:0, sin cuadro
+     propio ni recorte: la luna se ve completa). La sombra/brillo de la
+     esfera queda fija (luz constante) y solo gira la capa de crateres por
+     dentro, asi se lee como una esfera rotando de verdad. Un degradado
+     suave cerca de donde suele caer el titular ayuda a la legibilidad. */
   .hero-fondo {
-    position: absolute; inset: 0; z-index: 0; pointer-events: none;
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
   }
   .hero-fondo::after {
     content: ""; position: absolute; inset: 0;
-    background:
-      radial-gradient(62% 58% at 50% 64%, rgba(11,14,23,.82), transparent 72%),
-      linear-gradient(180deg, transparent 0%, transparent 18%, var(--noche) 86%);
+    background: radial-gradient(55% 42% at 50% 20%, rgba(11,14,23,.5), transparent 72%);
   }
   .fondo-canvas {
     position: absolute; inset: 0; width: 100%; height: 100%; display: block;
@@ -152,7 +152,7 @@
 
   /* Fallback si WebGL o el CDN de Three.js fallan: la luna sola en CSS puro. */
   .hero-orbe {
-    position: absolute; left: 50%; top: 2%;
+    position: fixed; left: 50%; top: max(64px, 7vh);
     width: clamp(150px, 26vw, 260px);
     height: clamp(150px, 26vw, 260px);
     transform: translateX(-50%);
@@ -706,6 +706,16 @@
 </head>
 <body>
 
+<!-- Fondo cosmico: fijo a la ventana, detras de todo (landing y app por
+     igual), igual que el cielo sutil y la aurora de mas arriba. -->
+<div class="hero-fondo" aria-hidden="true">
+  <canvas id="fondoCanvas" class="fondo-canvas oculto"></canvas>
+  <div class="hero-orbe" id="orbeFallback">
+    <div class="orbe-brillo"></div>
+    <div class="orbe-esfera"><div class="orbe-crateres"></div></div>
+  </div>
+</div>
+
 <!-- ===================== LANDING ===================== -->
 <div id="landing">
   <div class="lp">
@@ -717,13 +727,6 @@
     </nav>
 
     <header class="hero">
-      <div class="hero-fondo" aria-hidden="true">
-        <canvas id="fondoCanvas" class="fondo-canvas oculto"></canvas>
-        <div class="hero-orbe" id="orbeFallback">
-          <div class="orbe-brillo"></div>
-          <div class="orbe-esfera"><div class="orbe-crateres"></div></div>
-        </div>
-      </div>
       <div class="hero-contenido">
         <h1>IA sin suscripción,<br>y pagas con <em>Nequi</em>.</h1>
         <p class="bajada">
@@ -1042,7 +1045,7 @@
   // superficie y no un tinte dorado encima. Si por lo que sea no carga
   // (CDN caido, sin red), cae a la textura generada por codigo de mas
   // arriba en vez de quedar en negro.
-  var materialLuna = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96, metalness: 0.02 });
+  var materialLuna = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96, metalness: 0.02, transparent: true });
   new THREE.TextureLoader().load(
     'https://threejs.org/examples/textures/planets/moon_1024.jpg',
     function (textura) { materialLuna.map = textura; materialLuna.needsUpdate = true; },
@@ -1097,13 +1100,13 @@
   }));
   escena.add(estrellas);
 
-  // La luna va arriba del todo, parcialmente recortada por el marco (asi se
-  // ve intencional, no como si no cupiera). En vez de una fraccion fija del
-  // alto de la camara (que no sabe donde cae el titular de verdad), se mide
-  // la posicion real de .hero-contenido y se calcula el radio para que el
-  // borde inferior quede justo encima, con un respiro chico. Eso tambien lo
-  // respalda el degradado radial detras del texto, por si algo se desajusta.
+  // El fondo ahora cubre toda la ventana (fijo, detras de landing y app por
+  // igual), asi que la luna se ve completa, sin recorte. Se mide la
+  // posicion real de la barra de navegacion y de .hero-contenido para que
+  // la luna quede siempre en el hueco entre las dos, sin invadir ninguna:
+  // eso tambien lo respalda el degradado radial detras del texto.
   var contenido = document.querySelector('.hero-contenido');
+  var navEl = document.querySelector('.lp-nav');
   function ajustarTamano() {
     var ancho = contenedor.clientWidth || 320;
     var alto = contenedor.clientHeight || 320;
@@ -1115,11 +1118,15 @@
     var mitadAltoVisible = Math.tan((camara.fov * Math.PI / 180) / 2) * camara.position.z;
     var pxPorUnidad = alto / (2 * mitadAltoVisible);
 
-    var margenPx = contenido
-      ? contenido.getBoundingClientRect().top - contenedor.getBoundingClientRect().top
-      : alto * 0.2;
-    var bordeInferiorPx = Math.max(30, margenPx - 14);
-    var diametroPx = Math.max(90, Math.min(bordeInferiorPx * 1.5, alto * 0.55));
+    var techoPx = (navEl ? navEl.getBoundingClientRect().bottom : 0) + 10;
+    var margenPx = contenido ? contenido.getBoundingClientRect().top : alto * 0.2;
+    var bordeInferiorPx = Math.max(techoPx + 40, margenPx - 16);
+    var espacioDisponible = bordeInferiorPx - techoPx;
+    var deseado = Math.max(70, Math.min(espacioDisponible * 0.92, Math.min(alto * 0.32, 320)));
+    // Nunca mas grande que el hueco real: si el espacio es angosto, la
+    // luna se achica en vez de encimarse con la barra de arriba o el
+    // titular.
+    var diametroPx = Math.min(deseado, espacioDisponible);
     var radio = (diametroPx / 2) / pxPorUnidad;
     esfera.scale.setScalar(radio);
     halo.scale.setScalar(radio);
@@ -1144,12 +1151,34 @@
   canvas.classList.remove('oculto');
   if (fallback) fallback.classList.add('oculto');
 
+  // El fondo es fijo a la ventana, asi que sin esto la luna quedaria
+  // tapando el contenido de mas abajo al hacer scroll (paquetes, FAQ). Se
+  // desvanece segun cuanto del hero siga a la vista; las estrellas se
+  // quedan siempre, son sutiles y no estorban la lectura.
   var animando = !reducirMovimiento;
+  var objetivoOpacidad = 1;
+  function aplicarOpacidad(instantaneo) {
+    materialLuna.opacity = instantaneo
+      ? objetivoOpacidad
+      : materialLuna.opacity + (objetivoOpacidad - materialLuna.opacity) * 0.08;
+    halo.material.opacity = 0.16 * materialLuna.opacity;
+  }
+  var heroEl = document.querySelector('.hero');
+  if (heroEl && 'IntersectionObserver' in window) {
+    var pasos = [];
+    for (var p = 0; p <= 1.001; p += 0.05) pasos.push(Math.min(p, 1));
+    new IntersectionObserver(function (entries) {
+      objetivoOpacidad = entries[0].intersectionRatio;
+      if (!animando) { aplicarOpacidad(true); renderer.render(escena, camara); }
+    }, { threshold: pasos }).observe(heroEl);
+  }
+
   function animar() {
     if (animando) {
       esfera.rotation.y += 0.0026;
       halo.rotation.y -= 0.0008;
       estrellas.rotation.y += 0.00016;
+      aplicarOpacidad(false);
       requestAnimationFrame(animar);
     }
     renderer.render(escena, camara);
