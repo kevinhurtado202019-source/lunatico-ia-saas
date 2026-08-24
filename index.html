@@ -956,6 +956,7 @@
         <div class="hero-botones">
           <button class="btn btn-luna btn-luna-auto" onclick="irAcceso('crear')">Probar con 100 créditos gratis</button>
           <button class="btn btn-borde" onclick="document.getElementById('precios').scrollIntoView({behavior:'smooth'})">Ver precios</button>
+          <button class="btn btn-borde oculto" id="btnInstalarApp" onclick="instalarApp()">📲 Descargar app</button>
         </div>
         <p class="letra-chica">Sin tarjeta para empezar · Sin cobros automáticos</p>
       </div>
@@ -2853,6 +2854,37 @@
       navigator.serviceWorker.register('/sw.js').catch(function () {});
     });
   }
+
+  // Boton "Descargar app" en la landing: Chrome/Edge (Android y escritorio)
+  // avisan con este evento cuando la pagina cumple los requisitos para
+  // instalarse -- ahi se muestra el boton, y al tocarlo se dispara el mismo
+  // instalador nativo del navegador, sin pasar por un .apk suelto (Android
+  // bloquea instalar APKs de sitios web con una advertencia de "fuente
+  // desconocida"; este camino no la tiene). En Safari/iOS este evento nunca
+  // llega, asi que el boton simplemente se queda escondido ahi -- no rompe
+  // nada.
+  var promptDeInstalacion = null;
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault();
+    promptDeInstalacion = e;
+    var btn = document.getElementById('btnInstalarApp');
+    if (btn) btn.classList.remove('oculto');
+  });
+
+  window.instalarApp = function () {
+    if (!promptDeInstalacion) return;
+    promptDeInstalacion.prompt();
+    promptDeInstalacion.userChoice.then(function () {
+      promptDeInstalacion = null;
+      var btn = document.getElementById('btnInstalarApp');
+      if (btn) btn.classList.add('oculto');
+    });
+  };
+
+  window.addEventListener('appinstalled', function () {
+    var btn = document.getElementById('btnInstalarApp');
+    if (btn) btn.classList.add('oculto');
+  });
 </script>
 </body>
 </html>

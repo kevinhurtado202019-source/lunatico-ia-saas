@@ -89,6 +89,7 @@ async function recorrido() {
     const m = await pg.evaluate(() => {
       const anchoPag = document.querySelector('.lp').getBoundingClientRect().width;
       const b = [...document.querySelectorAll('.lp-nav .btn, .hero-botones .btn')]
+        .filter(x => x.offsetParent !== null)
         .map(x => Math.round(x.getBoundingClientRect().width));
       return { anchoPag: Math.round(anchoPag), b };
     });
@@ -98,7 +99,12 @@ async function recorrido() {
   });
 
   await paso('Los dos botones del hero van en la misma linea', async () => {
-    const y = await pg.$$eval('.hero-botones .btn', e => e.map(x => Math.round(x.getBoundingClientRect().top)));
+    // El boton "Descargar app" arranca escondido (solo aparece si el
+    // navegador dispara beforeinstallprompt), asi que se excluye de este
+    // chequeo de alineacion -- no tiene sentido alinear algo que no se ve.
+    const y = await pg.$$eval('.hero-botones .btn', e => e
+      .filter(x => x.offsetParent !== null)
+      .map(x => Math.round(x.getBoundingClientRect().top)));
     if (new Set(y).size !== 1) throw new Error('tops distintos: ' + y.join(','));
     return 'alineados';
   });

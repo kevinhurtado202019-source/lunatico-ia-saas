@@ -175,6 +175,18 @@ marca ningún error de sintaxis). La confirmación real necesita probarlo en
 un Chrome de verdad — buscar el ícono de instalar en la barra de
 direcciones, o en Android el aviso de "Agregar a pantalla de inicio".
 
+**Botón "Descargar app" en la landing.** Se agregó un tercer botón junto a
+"Probar con 100 créditos gratis" / "Ver precios", escondido por defecto
+(`.oculto`). Chrome/Edge disparan el evento `beforeinstallprompt` cuando la
+página cumple los requisitos de instalación; ahí se guarda ese evento y se
+muestra el botón, y al tocarlo se llama `prompt()` sobre el mismo evento —
+dispara el instalador nativo del navegador directamente, sin pasar por un
+`.apk` suelto (Android bloquea instalar APKs bajados de la web con una
+advertencia de "fuente desconocida" que este camino evita del todo). En
+Safari/iOS ese evento no existe, así que el botón se queda escondido ahí sin
+romper nada — degradación silenciosa, como el resto de las funciones que
+dependen de una API del navegador en este proyecto (voz, etc.).
+
 ### La IA no buscaba en internet aunque tenía la herramienta (27 de agosto de 2026)
 
 Caso real reportado: alguien le preguntó por sismos recientes en Colombia y
