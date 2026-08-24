@@ -195,6 +195,49 @@ antes de perder contexto. El costo en tokens (y por lo tanto en créditos) de
 mandar más historial lo paga cada quien vía su propio saldo, así que subirlo
 no le cuesta nada a la cuenta de LunaticoIA.
 
+### Proyectos (26 de agosto de 2026)
+
+Como los "Proyectos" de Claude.ai: cada usuario puede agrupar sus
+conversaciones en proyectos con nombre, además del chat general de siempre.
+Se abre desde el ícono de hamburguesa (☰) en la esquina superior izquierda
+del chat, que reutiliza el mismo panel deslizante que ya existía para "Mi
+cuenta" y "Paquetes" (`abrirPanel('proyectos')`).
+
+**Modelo de datos:** una colección nueva `proyectos`
+(`{_id, userId, nombre, createdAt}`) y un campo `proyectoId` en `messages`
+(`null` = chat general). Los mensajes de antes de esta función no tienen ese
+campo — Mongo trata "sin el campo" igual que "el campo en `null`" al
+consultar (`{proyectoId: null}` matchea ambos), así que caen solos en el chat
+general sin ninguna migración. **Ojo:** el doble de Mongo para pruebas
+(`fake-mongo.js`) no replicaba ese comportamiento — comparaba con
+`JSON.stringify`, y `JSON.stringify(undefined)` nunca es igual a
+`JSON.stringify(null)`. Se corrigió `igual()` ahí para que las pruebas no
+diverjan de cómo se comporta Mongo de verdad.
+
+**Aislamiento:** `/api/chat` valida que el `proyectoId` que manda el cliente
+exista y sea del usuario (si no, 400/404) antes de tocar nada; el historial
+que se le manda a Claude y el que se guarda quedan scopeados a ese proyecto.
+Nunca se mezclan mensajes de un proyecto con los de otro ni con el general.
+
+**Historial visual:** hasta esta función, la conversación en pantalla se
+perdía siempre al recargar la página (aunque el servidor sí recordaba el
+contexto para Claude). Cambiar de proyecto sin poder ver sus mensajes
+anteriores no tendría sentido, así que se agregó `GET /api/mensajes` para
+recargar los últimos `MENSAJES_POR_HISTORIAL_VISUAL` (50) mensajes de un
+proyecto (o del general) y pintarlos de nuevo con `turno()`. Los adjuntos
+(imagen/PDF) no se vuelven a mostrar en el historial recargado, solo un aviso
+de que hubo uno (`tuvoAdjunto`) — evita tener que re-mandar potencialmente
+megabytes de base64 solo para pintar la conversación.
+
+**Alcance de esta primera versión, a propósito:**
+- Al recargar la página siempre se vuelve al chat general — no se recuerda
+  cuál era el último proyecto abierto (nada guardado en `localStorage` para
+  eso). Se podría agregar después si hace falta.
+- Borrar un proyecto no borra sus mensajes de la base, los deja huérfanos
+  (invisibles porque ya no hay proyecto que los liste). Se hizo así a
+  propósito para no perder historial por un clic — nunca destructivo por
+  defecto.
+
 ### Instrucciones personalizadas
 
 Desde "Mi cuenta" cada usuario puede guardar sus propias instrucciones (tono,
@@ -277,7 +320,11 @@ una u otra, y la interfaz se adapta sola sin mostrar errores.
 | `POST` | `/api/login` | `{email, password}` · 20 cada 15 min e IP |
 | `GET` | `/api/stats` | Saldo, modos disponibles e instrucciones personalizadas · requiere token |
 | `POST` | `/api/instrucciones` | `{instrucciones}` · máx. 600 caracteres · se pegan al system prompt de cada chat |
-| `POST` | `/api/chat` | `{message, modelo, imagen?, documento?, archivoTexto?}` · 20 por minuto · 402 si no hay saldo |
+| `GET` | `/api/proyectos` | Lista los proyectos del usuario |
+| `POST` | `/api/proyectos` | `{nombre}` · máx. 60 caracteres · crea un proyecto |
+| `DELETE` | `/api/proyectos/:id` | Borra el proyecto (sus mensajes quedan huérfanos, no se borran) |
+| `GET` | `/api/mensajes` | `?proyectoId=` opcional · historial visual (general si se omite) |
+| `POST` | `/api/chat` | `{message, modelo, proyectoId?, imagen?, documento?, archivoTexto?}` · 20 por minuto · 402 si no hay saldo |
 | `GET` | `/api/paquetes` | Catálogo, público |
 | `POST` | `/api/comprar` | `{paquete}` · devuelve la firma para el checkout |
 | `POST` | `/api/webhook` | Wompi · verifica firma, idempotente |

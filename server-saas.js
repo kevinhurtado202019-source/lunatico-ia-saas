@@ -83,6 +83,8 @@ const SYSTEM_PROMPT_BASE = [
 ].join('\n');
 
 const MAX_CARACTERES_INSTRUCCIONES = 600;
+const MAX_CARACTERES_PROYECTO = 60;
+const MENSAJES_POR_HISTORIAL_VISUAL = 50;
 
 // Cada usuario puede guardar sus propias instrucciones (tono, idioma,
 // formato preferido, etc.) desde "Mi cuenta". Van pegadas al system prompt
@@ -437,12 +439,14 @@ async function connectDatabase() {
         const users = db.collection('users');
         const messages = db.collection('messages');
         const compras = db.collection('compras');
+        const proyectos = db.collection('proyectos');
 
         await users.createIndex({ email: 1 }, { unique: true });
         await users.createIndex({ verificationToken: 1 }, { sparse: true });
         await users.createIndex({ resetToken: 1 }, { sparse: true });
-        await messages.createIndex({ userId: 1, createdAt: -1 });
+        await messages.createIndex({ userId: 1, proyectoId: 1, createdAt: -1 });
         await compras.createIndex({ referencia: 1 }, { unique: true });
+        await proyectos.createIndex({ userId: 1, createdAt: -1 });
 
         console.log('✓ MongoDB connected successfully');
     } catch (error) {
@@ -714,6 +718,113 @@ app.post('/api/resetear-password', recuperarLimiter, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Proyectos
+//
+// Cada usuario puede agrupar sus conversaciones en proyectos con nombre (como
+// los "Proyectos" de Claude.ai), ademas del chat general de siempre (sin
+// proyecto). Un mensaje sin proyectoId sigue siendo del chat general -- los
+// mensajes de cuentas creadas antes de esta funcion tampoco tienen el campo,
+// y Mongo trata "sin el campo" igual que "el campo en null" al consultar, asi
+// que caen en el chat general automaticamente, sin migracion.
+// ---------------------------------------------------------------------------
+
+app.get('/api/proyectos', authenticateToken, async (req, res) => {
+    try {
+        const proyectos = db.collection('proyectos');
+        const userId = new ObjectId(req.user.userId);
+        const lista = await proyectos.find({ userId }).sort({ createdAt: -1 }).toArray();
+        res.json({
+            proyectos: lista.map((p) => ({ id: p._id.toString(), nombre: p.nombre, createdAt: p.createdAt }))
+        });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos cargar tus proyectos.', error, 'proyectos-listar');
+    }
+});
+
+app.post('/api/proyectos', authenticateToken, async (req, res) => {
+    try {
+        const nombre = typeof req.body.nombre === 'string' ? req.body.nombre.trim() : '';
+        if (!nombre) return res.status(400).json({ error: 'Ponle un nombre al proyecto' });
+        if (nombre.length > MAX_CARACTERES_PROYECTO) {
+            return res.status(400).json({ error: 'Máximo ' + MAX_CARACTERES_PROYECTO + ' caracteres' });
+        }
+        const proyectos = db.collection('proyectos');
+        const userId = new ObjectId(req.user.userId);
+        const createdAt = new Date();
+        const r = await proyectos.insertOne({ userId, nombre, createdAt });
+        res.status(201).json({ id: r.insertedId.toString(), nombre, createdAt });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos crear el proyecto.', error, 'proyectos-crear');
+    }
+});
+
+app.delete('/api/proyectos/:id', authenticateToken, async (req, res) => {
+    try {
+        let proyectoId;
+        try { proyectoId = new ObjectId(req.params.id); } catch (e) {
+            return res.status(400).json({ error: 'Proyecto no válido' });
+        }
+        const proyectos = db.collection('proyectos');
+        const userId = new ObjectId(req.user.userId);
+        const proyecto = await proyectos.findOne({ _id: proyectoId, userId });
+        if (!proyecto) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+        await proyectos.deleteOne({ _id: proyectoId, userId });
+        // Los mensajes del proyecto se quedan en la base (por si acaso), pero
+        // huerfanos: como ya no hay proyecto que los liste, simplemente dejan
+        // de ser visibles. No se borran para no perder historial por error.
+        res.json({ eliminado: true });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos eliminar el proyecto.', error, 'proyectos-eliminar');
+    }
+});
+
+// Historial visual de una conversacion (general si no se manda proyectoId,
+// o de un proyecto puntual). Separado de la logica de /api/chat porque ahi
+// el historial se arma para mandarselo a Claude, no para pintarlo en pantalla.
+app.get('/api/mensajes', authenticateToken, async (req, res) => {
+    try {
+        const userId = new ObjectId(req.user.userId);
+        let proyectoId = null;
+        if (req.query.proyectoId) {
+            try { proyectoId = new ObjectId(req.query.proyectoId); } catch (e) {
+                return res.status(400).json({ error: 'Proyecto no válido' });
+            }
+            const proyectos = db.collection('proyectos');
+            const existe = await proyectos.findOne({ _id: proyectoId, userId });
+            if (!existe) return res.status(404).json({ error: 'Proyecto no encontrado' });
+        }
+
+        const messages = db.collection('messages');
+        const historial = await messages
+            .find({ userId, proyectoId })
+            .sort({ createdAt: -1, _id: -1 })
+            .limit(MENSAJES_POR_HISTORIAL_VISUAL)
+            .toArray();
+
+        res.json({
+            mensajes: historial.reverse().map((m) => {
+                // El contenido puede ser texto plano o (si el turno tuvo
+                // imagen/PDF) una lista de bloques -- para pintar en pantalla
+                // solo hace falta el texto; el archivo en si no se re-manda.
+                const esBloques = Array.isArray(m.content);
+                const texto = esBloques
+                    ? (m.content.find((b) => b.type === 'text') || {}).text || ''
+                    : m.content;
+                return {
+                    role: m.role,
+                    texto: texto,
+                    tuvoAdjunto: esBloques && m.content.some((b) => b.type === 'image' || b.type === 'document'),
+                    createdAt: m.createdAt
+                };
+            })
+        });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos cargar la conversación.', error, 'mensajes-historial');
+    }
+});
+
+// ---------------------------------------------------------------------------
 // Chat
 // ---------------------------------------------------------------------------
 
@@ -780,7 +891,20 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
 
         const users = db.collection('users');
         const messages = db.collection('messages');
+        const proyectosCol = db.collection('proyectos');
         const userId = new ObjectId(req.user.userId);
+
+        // proyectoId null = chat general (de siempre). Si viene uno, tiene
+        // que existir y ser del usuario -- si no, mejor rechazar que guardar
+        // el mensaje en un proyecto ajeno o inexistente.
+        let proyectoId = null;
+        if (req.body.proyectoId) {
+            try { proyectoId = new ObjectId(req.body.proyectoId); } catch (e) {
+                return res.status(400).json({ error: 'Proyecto no válido' });
+            }
+            const proyectoExiste = await proyectosCol.findOne({ _id: proyectoId, userId });
+            if (!proyectoExiste) return res.status(404).json({ error: 'Proyecto no encontrado' });
+        }
 
         let user = await users.findOne({ _id: userId });
         if (!user) return res.status(404).json({ error: 'User not found' });
@@ -805,7 +929,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         }
 
         const history = await messages
-            .find({ userId })
+            .find({ userId, proyectoId })
             .sort({ createdAt: -1, _id: -1 })
             .limit(MENSAJES_DE_HISTORIAL)
             .toArray();
@@ -881,12 +1005,12 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         // "viendo" en los siguientes mensajes de la misma conversacion.
         const guardadoEn = new Date();
         await messages.insertOne({
-            userId, role: 'user',
+            userId, proyectoId, role: 'user',
             content: contenidoUsuario,
             createdAt: guardadoEn
         });
         await messages.insertOne({
-            userId, role: 'assistant', content: aiMessage,
+            userId, proyectoId, role: 'assistant', content: aiMessage,
             createdAt: new Date(guardadoEn.getTime() + 1)
         });
 

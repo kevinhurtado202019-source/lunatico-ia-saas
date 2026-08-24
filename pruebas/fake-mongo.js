@@ -4,6 +4,11 @@
 const { ObjectId } = require('mongodb/lib/bson');
 
 function igual(v, q) {
+    // Mongo de verdad: consultar por null trae tanto los documentos con el
+    // campo en null como los que ni siquiera tienen ese campo. Sin este caso
+    // especial, JSON.stringify(undefined) da "undefined" (el valor, no un
+    // string) y nunca es igual a JSON.stringify(null) === "null".
+    if (q === null) return v === null || v === undefined;
     if (q instanceof ObjectId) return v && v.toString() === q.toString();
     if (v instanceof ObjectId) return q && v.toString() === q.toString();
     return JSON.stringify(v) === JSON.stringify(q);
@@ -85,6 +90,13 @@ class FakeCollection {
             for (const k of Object.keys(update.$unset)) delete d[k];
         }
         return { matchedCount: 1, modifiedCount: 1 };
+    }
+
+    async deleteOne(filter) {
+        const i = this.docs.findIndex((doc) => matches(doc, filter));
+        if (i === -1) return { deletedCount: 0 };
+        this.docs.splice(i, 1);
+        return { deletedCount: 1 };
     }
 
     find(query) {
