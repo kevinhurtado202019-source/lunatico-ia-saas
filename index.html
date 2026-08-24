@@ -539,6 +539,14 @@
   }
   .turno.yo .texto:has(.imagen-mensaje:only-child) { padding: 6px; }
 
+  .archivo-mensaje {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: var(--noche); border: 1px solid var(--borde-suave);
+    border-radius: 9px; padding: 7px 12px; margin-bottom: 8px;
+    font-size: 13.5px; color: var(--suave); max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
   .turno .cuando { font-size: 11.5px; color: var(--tenue); margin-top: 7px; }
   .turno.yo .cuando { text-align: right; }
 
@@ -573,13 +581,15 @@
   .turno.ia .texto pre::-webkit-scrollbar { width: 9px; height: 9px; }
   .turno.ia .texto pre::-webkit-scrollbar-thumb { background: var(--borde); border-radius: 5px; }
   .turno.ia .texto pre code { background: none; padding: 0; font-size: .85em; line-height: 1.55; }
-  .turno.ia .texto .copiar-codigo {
-    position: absolute; top: 8px; right: 8px; z-index: 1;
+  .turno.ia .texto .acciones-codigo {
+    position: absolute; top: 8px; right: 8px; z-index: 1; display: flex; gap: 6px;
+  }
+  .turno.ia .texto .copiar-codigo, .turno.ia .texto .descargar-codigo {
     background: var(--noche); color: var(--tenue); border: 1px solid var(--borde-suave);
     border-radius: 6px; padding: 4px 10px; font-size: .75em; font-family: var(--ui);
     cursor: pointer; transition: color .15s, border-color .15s;
   }
-  .turno.ia .texto .copiar-codigo:hover { color: var(--texto); border-color: var(--luna); }
+  .turno.ia .texto .copiar-codigo:hover, .turno.ia .texto .descargar-codigo:hover { color: var(--texto); border-color: var(--luna); }
   .turno.ia .texto .copiar-codigo.copiado { color: var(--luna); border-color: var(--luna); }
   .turno.ia .texto h1, .turno.ia .texto h2, .turno.ia .texto h3 {
     font-family: var(--display); font-weight: 700; line-height: 1.3; margin: .9em 0 .4em;
@@ -678,7 +688,24 @@
   .enviar:disabled { opacity: .32; cursor: not-allowed; filter: none; }
   .enviar svg { width: 17px; height: 17px; }
 
-  .controles .adjuntar { width: 36px; height: 36px; flex: none; }
+  .controles .adjuntar, .controles .microfono { width: 36px; height: 36px; flex: none; }
+  .controles .microfono.escuchando {
+    background: rgba(236,138,128,.16); color: var(--error);
+    animation: pulso-mic 1.1s ease-in-out infinite;
+  }
+  @keyframes pulso-mic {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(236,138,128,.35); }
+    50% { box-shadow: 0 0 0 6px rgba(236,138,128,0); }
+  }
+
+  .boton-escuchar {
+    display: inline-flex; align-items: center; gap: 5px; margin-top: 8px;
+    background: var(--noche); color: var(--tenue); border: 1px solid var(--borde-suave);
+    border-radius: 6px; padding: 4px 10px; font-size: .78em; font-family: var(--ui);
+    cursor: pointer; transition: color .15s, border-color .15s;
+  }
+  .boton-escuchar:hover { color: var(--texto); border-color: var(--luna); }
+  .boton-escuchar.leyendo { color: var(--luna); border-color: var(--luna); }
 
   .adjunto {
     display: flex; align-items: center; gap: 9px;
@@ -687,6 +714,10 @@
   }
   .adjunto img {
     width: 34px; height: 34px; border-radius: 7px; object-fit: cover; flex: none;
+  }
+  .adjunto-icono {
+    width: 34px; height: 34px; border-radius: 7px; flex: none;
+    display: grid; place-items: center; font-size: 17px; background: var(--alta);
   }
   .adjunto-nombre {
     flex: 1; min-width: 0; font-size: 13px; color: var(--suave);
@@ -795,6 +826,15 @@
     background: var(--noche); border: 1px solid var(--borde-suave);
     border-radius: 10px; padding: 13px 15px;
   }
+
+  .campo-instrucciones {
+    width: 100%; min-height: 84px; resize: vertical; margin-bottom: 10px;
+    background: var(--noche); color: var(--texto); border: 1px solid var(--borde-suave);
+    border-radius: 10px; padding: 11px 13px; font-family: var(--ui); font-size: 14px;
+    line-height: 1.5;
+  }
+  .campo-instrucciones:focus { outline: 2px solid var(--luna); outline-offset: 1px; }
+  .nota-guardado { font-size: 13px; margin: 8px 0 0; min-height: 1.4em; }
 
   /* En pantallas tactiles los controles necesitan 44px para acertarles */
   @media (pointer: coarse) {
@@ -1053,19 +1093,26 @@
   <div class="pie">
     <div class="redactor">
       <div class="adjunto oculto" id="cajaAdjunto">
-        <img id="adjuntoPreview" alt="">
+        <img id="adjuntoPreview" alt="" class="oculto">
+        <span class="adjunto-icono oculto" id="adjuntoIcono" aria-hidden="true"></span>
         <span class="adjunto-nombre" id="adjuntoNombre"></span>
-        <button type="button" class="adjunto-quitar" onclick="quitarAdjunto()" aria-label="Quitar imagen" title="Quitar imagen">✕</button>
+        <button type="button" class="adjunto-quitar" onclick="quitarAdjunto()" aria-label="Quitar archivo" title="Quitar archivo">✕</button>
       </div>
       <div class="caja">
         <textarea id="entrada" rows="1" aria-label="Escribe tu mensaje" placeholder="Escribe tu mensaje…" oninput="ajustarAlto()" onkeydown="teclas(event)"></textarea>
         <div class="controles">
-          <button class="icono adjuntar" type="button" onclick="document.getElementById('archivoImagen').click()" aria-label="Adjuntar imagen" title="Adjuntar imagen">
+          <button class="icono adjuntar" type="button" onclick="document.getElementById('archivoAdjunto').click()" aria-label="Adjuntar archivo" title="Adjuntar imagen, PDF o texto">
             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21.4 11.1 12.7 19.8a4.5 4.5 0 0 1-6.4-6.4l8.7-8.7a3 3 0 0 1 4.2 4.2L10.5 17.7a1.5 1.5 0 0 1-2.1-2.1l7.1-7.1"/>
             </svg>
           </button>
-          <input type="file" id="archivoImagen" accept="image/jpeg,image/png,image/gif,image/webp" class="oculto" onchange="elegirImagen(event)">
+          <input type="file" id="archivoAdjunto" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,.txt,.md,.csv,.json,.yml,.yaml,.xml,.log,.js,.jsx,.ts,.tsx,.py,.java,.c,.cpp,.h,.hpp,.cs,.go,.rb,.php,.html,.css,.scss,.sql,.sh,.env" class="oculto" onchange="elegirArchivo(event)">
+          <button class="icono microfono" id="btnMicrofono" type="button" onclick="alternarDictado()" aria-label="Dictar por voz" title="Dictar por voz">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="3" width="6" height="11" rx="3"/>
+              <path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>
+            </svg>
+          </button>
           <select class="modo" id="modo" aria-label="Modo de respuesta" title="Modelo a usar"></select>
           <button class="enviar" id="btnEnviar" onclick="enviar()" aria-label="Enviar mensaje">
             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1323,7 +1370,8 @@
   var hayMensajes = false;
   var tokenReset = null;
   var saldoMostrado = null;
-  var adjuntoActual = null; // { mediaType, datos, nombre, previewUrl }
+  // { tipo:'imagen', mediaType, datos, nombre } | { tipo:'documento', mediaType, datos, nombre } | { tipo:'texto', contenido, nombre }
+  var adjuntoActual = null;
   var MAX_IMAGEN_BYTES = 10 * 1024 * 1024;
   var reducirMovimiento = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -1693,39 +1741,174 @@
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviar(); }
   };
 
-  // Adjuntar una imagen: capturas, disenos, mockups del proyecto de quien
-  // pregunta. Se guarda en base64 en memoria hasta que se manda el mensaje;
-  // nunca se sube a ningun lado por separado.
-  window.elegirImagen = function (e) {
+  // ---------------- voz ----------------
+  // API nativa del navegador: gratis, sin cuenta ni API key de nadie. Solo
+  // funciona bien en Chrome/Edge; en los que no la soportan, el boton de
+  // dictado se esconde solo y "leer en voz alta" simplemente no aparece.
+  var MotorReconocimiento = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var reconocedor = null;
+  var escuchando = false;
+
+  if (!MotorReconocimiento && $('btnMicrofono')) {
+    $('btnMicrofono').classList.add('oculto');
+  }
+
+  window.alternarDictado = function () {
+    if (!MotorReconocimiento) return;
+    if (escuchando) {
+      if (reconocedor) reconocedor.stop();
+      return;
+    }
+    reconocedor = new MotorReconocimiento();
+    reconocedor.lang = 'es-ES';
+    reconocedor.interimResults = false;
+    reconocedor.maxAlternatives = 1;
+    reconocedor.onresult = function (e) {
+      var texto = '';
+      for (var i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) texto += e.results[i][0].transcript;
+      }
+      texto = texto.trim();
+      if (texto) {
+        var t = $('entrada');
+        t.value = (t.value ? t.value.replace(/\s+$/, '') + ' ' : '') + texto;
+        ajustarAlto();
+      }
+    };
+    reconocedor.onerror = function (e) {
+      if (e.error !== 'no-speech' && e.error !== 'aborted') {
+        avisoPie('No se pudo usar el micrófono. Revisa los permisos del navegador.');
+      }
+    };
+    reconocedor.onend = function () {
+      escuchando = false;
+      $('btnMicrofono').classList.remove('escuchando');
+    };
+    try {
+      reconocedor.start();
+      escuchando = true;
+      $('btnMicrofono').classList.add('escuchando');
+    } catch (e) {
+      escuchando = false;
+    }
+  };
+
+  function agregarBotonEscuchar(caja, elTexto) {
+    if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') return;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'boton-escuchar';
+    btn.setAttribute('aria-label', 'Leer en voz alta');
+    btn.title = 'Leer en voz alta';
+    btn.textContent = '🔊';
+    btn.onclick = function () {
+      var yaLeyendo = btn.classList.contains('leyendo');
+      speechSynthesis.cancel();
+      var otros = document.querySelectorAll('.boton-escuchar.leyendo');
+      for (var i = 0; i < otros.length; i++) { otros[i].classList.remove('leyendo'); otros[i].textContent = '🔊'; }
+      if (yaLeyendo) return;
+
+      var clon = elTexto.cloneNode(true);
+      var bloques = clon.querySelectorAll('.bloque-codigo');
+      for (var j = 0; j < bloques.length; j++) bloques[j].textContent = ' bloque de código. ';
+      var texto = (clon.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!texto) return;
+
+      var u = new SpeechSynthesisUtterance(texto);
+      u.lang = 'es-ES';
+      u.onend = function () { btn.classList.remove('leyendo'); btn.textContent = '🔊'; };
+      u.onerror = function () { btn.classList.remove('leyendo'); btn.textContent = '🔊'; };
+      btn.classList.add('leyendo');
+      btn.textContent = '⏹';
+      speechSynthesis.speak(u);
+    };
+    caja.appendChild(btn);
+  }
+
+  var TIPOS_IMAGEN_VALIDOS = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+  var MAX_PDF_BYTES = 15 * 1024 * 1024;
+  var MAX_TEXTO_CARACTERES = 120000;
+  var EXTENSIONES_TEXTO = ['txt', 'md', 'csv', 'json', 'yml', 'yaml', 'xml', 'log',
+    'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'cs',
+    'go', 'rb', 'php', 'html', 'css', 'scss', 'sql', 'sh', 'env'];
+
+  function mostrarAdjunto(nombre, previewUrl) {
+    $('adjuntoNombre').textContent = nombre;
+    if (previewUrl) {
+      $('adjuntoPreview').src = previewUrl;
+      $('adjuntoPreview').classList.remove('oculto');
+      $('adjuntoIcono').classList.add('oculto');
+    } else {
+      $('adjuntoPreview').classList.add('oculto');
+      $('adjuntoIcono').classList.remove('oculto');
+      $('adjuntoIcono').textContent = /\.pdf$/i.test(nombre) ? '📄' : '📝';
+    }
+    $('cajaAdjunto').classList.remove('oculto');
+    avisoPie('');
+    ajustarAlto();
+  }
+
+  // Adjuntar un archivo: imagen (capturas, disenos, mockups), PDF o texto/
+  // codigo. Todo se guarda en memoria hasta que se manda el mensaje; nunca se
+  // sube a ningun lado por separado.
+  window.elegirArchivo = function (e) {
     var archivo = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!archivo) return;
 
-    var tiposValidos = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (tiposValidos.indexOf(archivo.type) === -1) {
-      avisoPie('Solo se aceptan imágenes JPEG, PNG, GIF o WEBP.');
-      return;
-    }
-    if (archivo.size > MAX_IMAGEN_BYTES) {
-      avisoPie('La imagen pesa demasiado (máximo 10 MB).');
+    var ext = (archivo.name.split('.').pop() || '').toLowerCase();
+
+    if (TIPOS_IMAGEN_VALIDOS.indexOf(archivo.type) !== -1) {
+      if (archivo.size > MAX_IMAGEN_BYTES) {
+        avisoPie('La imagen pesa demasiado (máximo 10 MB).');
+        return;
+      }
+      var lectorImg = new FileReader();
+      lectorImg.onload = function () {
+        var resultado = String(lectorImg.result || '');
+        var datos = resultado.slice(resultado.indexOf(',') + 1);
+        adjuntoActual = { tipo: 'imagen', mediaType: archivo.type, datos: datos, nombre: archivo.name };
+        mostrarAdjunto(archivo.name, resultado);
+      };
+      lectorImg.onerror = function () { avisoPie('No se pudo leer la imagen. Inténtalo de nuevo.'); };
+      lectorImg.readAsDataURL(archivo);
       return;
     }
 
-    var lector = new FileReader();
-    lector.onload = function () {
-      var resultado = String(lector.result || '');
-      var datos = resultado.slice(resultado.indexOf(',') + 1);
-      adjuntoActual = { mediaType: archivo.type, datos: datos, nombre: archivo.name, previewUrl: resultado };
-      $('adjuntoPreview').src = resultado;
-      $('adjuntoNombre').textContent = archivo.name;
-      $('cajaAdjunto').classList.remove('oculto');
-      avisoPie('');
-      ajustarAlto();
-    };
-    lector.onerror = function () {
-      avisoPie('No se pudo leer la imagen. Inténtalo de nuevo.');
-    };
-    lector.readAsDataURL(archivo);
+    if (archivo.type === 'application/pdf' || ext === 'pdf') {
+      if (archivo.size > MAX_PDF_BYTES) {
+        avisoPie('El PDF pesa demasiado (máximo 15 MB).');
+        return;
+      }
+      var lectorPdf = new FileReader();
+      lectorPdf.onload = function () {
+        var resultado = String(lectorPdf.result || '');
+        var datos = resultado.slice(resultado.indexOf(',') + 1);
+        adjuntoActual = { tipo: 'documento', mediaType: 'application/pdf', datos: datos, nombre: archivo.name };
+        mostrarAdjunto(archivo.name, null);
+      };
+      lectorPdf.onerror = function () { avisoPie('No se pudo leer el PDF. Inténtalo de nuevo.'); };
+      lectorPdf.readAsDataURL(archivo);
+      return;
+    }
+
+    if (EXTENSIONES_TEXTO.indexOf(ext) !== -1) {
+      var lectorTexto = new FileReader();
+      lectorTexto.onload = function () {
+        var contenido = String(lectorTexto.result || '');
+        if (contenido.length > MAX_TEXTO_CARACTERES) {
+          avisoPie('El archivo es muy largo (máximo ' + MAX_TEXTO_CARACTERES.toLocaleString('es') + ' caracteres).');
+          return;
+        }
+        adjuntoActual = { tipo: 'texto', contenido: contenido, nombre: archivo.name };
+        mostrarAdjunto(archivo.name, null);
+      };
+      lectorTexto.onerror = function () { avisoPie('No se pudo leer el archivo. Inténtalo de nuevo.'); };
+      lectorTexto.readAsText(archivo);
+      return;
+    }
+
+    avisoPie('Ese tipo de archivo no se puede adjuntar todavía (imágenes, PDF o texto/código sí).');
   };
 
   window.quitarAdjunto = function () {
@@ -1736,7 +1919,8 @@
   };
 
   window.copiarCodigo = function (boton) {
-    var code = boton.parentElement.querySelector('pre code');
+    var caja = boton.closest('.bloque-codigo');
+    var code = caja && caja.querySelector('pre code');
     if (!code) return;
     var texto = code.textContent || '';
     function marcarCopiado() {
@@ -1769,6 +1953,36 @@
     alTerminar();
   }
 
+  // Extensiones para el boton "Descargar" segun el lenguaje que puso el
+  // modelo despues de los ``` -- si no lo reconoce, cae a .txt (sigue siendo
+  // un archivo de texto plano legible, nada se rompe).
+  var EXTENSION_POR_LENGUAJE = {
+    js: 'js', javascript: 'js', jsx: 'jsx', ts: 'ts', typescript: 'ts', tsx: 'tsx',
+    py: 'py', python: 'py', java: 'java', c: 'c', cpp: 'cpp', 'c++': 'cpp', h: 'h',
+    cs: 'cs', csharp: 'cs', go: 'go', golang: 'go', rb: 'rb', ruby: 'rb', php: 'php',
+    html: 'html', xml: 'xml', css: 'css', scss: 'scss', json: 'json', yml: 'yml',
+    yaml: 'yml', sql: 'sql', sh: 'sh', bash: 'sh', shell: 'sh', md: 'md',
+    markdown: 'md', csv: 'csv', swift: 'swift', kotlin: 'kt', kt: 'kt', rust: 'rs',
+    rs: 'rs'
+  };
+
+  window.descargarCodigo = function (boton) {
+    var caja = boton.closest('.bloque-codigo');
+    var code = caja && caja.querySelector('pre code');
+    if (!code) return;
+    var texto = code.textContent || '';
+    var ext = boton.getAttribute('data-ext') || 'txt';
+    var blob = new Blob([texto], { type: 'text/plain;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'lunaticoia-codigo-' + Date.now() + '.' + ext;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  };
+
   // Markdown minimo (parrafos, **negrita**, *cursiva*, `codigo`, ```bloques```,
   // listas y # encabezados) para que las respuestas se vean como las de un
   // chat serio y no como texto plano. Todo se escapa antes de formatear, asi
@@ -1778,11 +1992,15 @@
   function renderizarMarkdown(texto) {
     var bruto = String(texto == null ? '' : texto);
     var bloques = [];
-    bruto = bruto.replace(/```[a-zA-Z0-9]*\n?([\s\S]*?)```/g, function (m, codigo) {
+    bruto = bruto.replace(/```([a-zA-Z0-9]*)\n?([\s\S]*?)```/g, function (m, lenguaje, codigo) {
       var idx = bloques.length;
+      var ext = EXTENSION_POR_LENGUAJE[(lenguaje || '').toLowerCase()] || 'txt';
       bloques.push(
         '<div class="bloque-codigo">' +
-          '<button type="button" class="copiar-codigo" onclick="copiarCodigo(this)" aria-label="Copiar código">Copiar</button>' +
+          '<div class="acciones-codigo">' +
+            '<button type="button" class="descargar-codigo" onclick="descargarCodigo(this)" data-ext="' + esc(ext) + '" aria-label="Descargar código">Descargar</button>' +
+            '<button type="button" class="copiar-codigo" onclick="copiarCodigo(this)" aria-label="Copiar código">Copiar</button>' +
+          '</div>' +
           '<pre><code>' + esc(codigo.replace(/\n$/, '')) + '</code></pre>' +
         '</div>'
       );
@@ -1906,12 +2124,17 @@
     if ($('logoRespondiendo')) $('logoRespondiendo').classList.add('respondiendo');
 
     var mio = turno('yo', 'Tú', mensaje);
-    if (adjunto) {
+    if (adjunto && adjunto.tipo === 'imagen') {
       var imagenMio = document.createElement('img');
-      imagenMio.src = adjunto.previewUrl;
+      imagenMio.src = 'data:' + adjunto.mediaType + ';base64,' + adjunto.datos;
       imagenMio.alt = adjunto.nombre;
       imagenMio.className = 'imagen-mensaje';
       mio.texto.insertBefore(imagenMio, mio.texto.firstChild);
+    } else if (adjunto) {
+      var chipMio = document.createElement('div');
+      chipMio.className = 'archivo-mensaje';
+      chipMio.textContent = (adjunto.tipo === 'documento' ? '📄 ' : '📝 ') + adjunto.nombre;
+      mio.texto.insertBefore(chipMio, mio.texto.firstChild);
     }
     var esperando = turno('ia', 'LunaticoIA', null);
     esperando.texto.innerHTML = '<span class="pensando">' + clonarLogo('logo-pensando') + 'Pensando</span>';
@@ -1921,48 +2144,108 @@
     // pulsar Enter.
     var falloDeRed = false;
 
-    api('/api/chat', {
+    var headersChat = { 'Content-Type': 'application/json' };
+    if (token) headersChat['Authorization'] = 'Bearer ' + token;
+
+    fetch('/api/chat', {
       method: 'POST',
+      headers: headersChat,
       body: JSON.stringify({
         message: mensaje,
         modelo: $('modo').value || undefined,
-        imagen: adjunto ? { mediaType: adjunto.mediaType, datos: adjunto.datos } : undefined
+        imagen: adjunto && adjunto.tipo === 'imagen' ? { mediaType: adjunto.mediaType, datos: adjunto.datos } : undefined,
+        documento: adjunto && adjunto.tipo === 'documento' ? { mediaType: adjunto.mediaType, datos: adjunto.datos, nombre: adjunto.nombre } : undefined,
+        archivoTexto: adjunto && adjunto.tipo === 'texto' ? { contenido: adjunto.contenido, nombre: adjunto.nombre } : undefined
       })
-    }).then(function (r) {
-      if (r.res.status === 402) {
+    }).then(function (res) {
+      if (res.status === 402) {
         esperando.texto.textContent = 'Te quedaste sin créditos. Compra un paquete para seguir conversando.';
         if (yo) { yo.creditBalance = 0; pintarSaldo(); }
         abrirPanel('paquetes');
         return;
       }
-      // El servidor respondio, aunque sea con error: la peticion SI llego, asi
-      // que el aviso se queda en el hilo en vez de tratarse como fallo de red.
-      if (!r.res.ok) {
-        esperando.texto.textContent =
-          (r.data && r.data.error) || 'No pudimos generar la respuesta. Inténtalo de nuevo.';
-        return;
+      // Hasta aca el servidor todavia puede rechazar la peticion entera con
+      // un codigo de error normal (400/401/403/404/500): la respuesta en
+      // stream (200) recien empieza mas abajo.
+      if (!res.ok) {
+        return res.json().catch(function () { return null; }).then(function (data) {
+          esperando.texto.textContent =
+            (data && data.error) || 'No pudimos generar la respuesta. Inténtalo de nuevo.';
+        });
       }
 
-      esperando.texto.innerHTML = renderizarMarkdown(r.data.response);
-      pintarEmoji(esperando.texto);
+      // Respuesta en Server-Sent Events: el texto llega en pedazos. Se
+      // muestra tal cual (texto plano) mientras llega, y solo al final se
+      // aplica el formato completo (markdown, emoji, botones de codigo).
+      var lector = res.body.getReader();
+      var decodificador = new TextDecoder();
+      var restante = '';
+      var textoAcumulado = '';
+      var consumoFinal = null;
+      var mensajeError = null;
+      var primerPedazo = true;
 
-      var c = r.data.consumo;
-      if (c) {
-        var linea = document.createElement('div');
-        linea.className = 'consumo';
-        var texto = c.creditosCobrados + ' créditos · ' + c.modelo +
-          ' · ' + c.tokensEntrada + ' entrada / ' + c.tokensSalida + ' salida';
-        if (c.busquedas) texto += ' · ' + c.busquedas + ' búsqueda' + (c.busquedas > 1 ? 's' : '') + ' web';
-        if (c.lecturasWeb) texto += ' · ' + c.lecturasWeb + ' página' + (c.lecturasWeb > 1 ? 's' : '') + ' leída' + (c.lecturasWeb > 1 ? 's' : '');
-        linea.textContent = texto;
-        esperando.caja.appendChild(linea);
-        if (yo) {
-          yo.creditBalance = c.creditBalance;
-          if (c.creditosIlimitados) yo.creditosIlimitados = true;
-          pintarSaldo();
+      function procesarLinea(bloque) {
+        var lineas = bloque.split('\n');
+        var datos = null;
+        for (var i = 0; i < lineas.length; i++) {
+          if (lineas[i].indexOf('data: ') === 0) { datos = lineas[i].slice(6); break; }
+        }
+        if (!datos) return;
+        var payload;
+        try { payload = JSON.parse(datos); } catch (e) { return; }
+        if (payload.tipo === 'delta') {
+          if (primerPedazo) { esperando.texto.textContent = ''; primerPedazo = false; }
+          textoAcumulado += payload.texto;
+          esperando.texto.textContent = textoAcumulado;
+          abajo();
+        } else if (payload.tipo === 'fin') {
+          consumoFinal = payload.consumo;
+          if (payload.response) textoAcumulado = payload.response;
+        } else if (payload.tipo === 'error') {
+          mensajeError = payload.mensaje;
         }
       }
-      abajo();
+
+      function leer() {
+        return lector.read().then(function (resultado) {
+          if (resultado.done) return;
+          restante += decodificador.decode(resultado.value, { stream: true });
+          var bloques = restante.split('\n\n');
+          restante = bloques.pop();
+          bloques.forEach(procesarLinea);
+          return leer();
+        });
+      }
+
+      return leer().then(function () {
+        if (mensajeError) {
+          esperando.texto.textContent = mensajeError;
+          return;
+        }
+
+        esperando.texto.innerHTML = renderizarMarkdown(textoAcumulado);
+        pintarEmoji(esperando.texto);
+        agregarBotonEscuchar(esperando.caja, esperando.texto);
+
+        var c = consumoFinal;
+        if (c) {
+          var linea = document.createElement('div');
+          linea.className = 'consumo';
+          var texto = c.creditosCobrados + ' créditos · ' + c.modelo +
+            ' · ' + c.tokensEntrada + ' entrada / ' + c.tokensSalida + ' salida';
+          if (c.busquedas) texto += ' · ' + c.busquedas + ' búsqueda' + (c.busquedas > 1 ? 's' : '') + ' web';
+          if (c.lecturasWeb) texto += ' · ' + c.lecturasWeb + ' página' + (c.lecturasWeb > 1 ? 's' : '') + ' leída' + (c.lecturasWeb > 1 ? 's' : '');
+          linea.textContent = texto;
+          esperando.caja.appendChild(linea);
+          if (yo) {
+            yo.creditBalance = c.creditBalance;
+            if (c.creditosIlimitados) yo.creditosIlimitados = true;
+            pintarSaldo();
+          }
+        }
+        abajo();
+      });
     }).catch(function (err) {
       falloDeRed = true;
       mio.caja.remove();
@@ -1971,9 +2254,7 @@
       t.value = mensaje;
       if (adjunto) {
         adjuntoActual = adjunto;
-        $('adjuntoPreview').src = adjunto.previewUrl;
-        $('adjuntoNombre').textContent = adjunto.nombre;
-        $('cajaAdjunto').classList.remove('oculto');
+        mostrarAdjunto(adjunto.nombre, adjunto.tipo === 'imagen' ? ('data:' + adjunto.mediaType + ';base64,' + adjunto.datos) : null);
       }
       avisoPie('No se pudo enviar. Revisa tu conexión y vuelve a intentarlo.');
     }).then(function () {
@@ -2074,8 +2355,39 @@
         'correr código cuando lo necesita. Abrir páginas y correr código no cuesta ' +
         'extra; cada búsqueda web suma ' + (yo.creditosPorBusqueda || 0) + ' créditos aparte de los tokens.</p>' +
       '</div>' +
+      '<div class="bloque">' +
+        '<h3>Instrucciones personalizadas</h3>' +
+        '<p class="nota">Cómo querés que te hable LunaticoIA: tono, idioma, qué tan detallada la respuesta, etc. Se aplica a toda conversación nueva.</p>' +
+        '<textarea id="cajaInstrucciones" class="campo-instrucciones" maxlength="' + (yo.maxCaracteresInstrucciones || 600) + '" placeholder="Ej: respóndeme siempre en español, directo y sin rodeos.">' + esc(yo.instrucciones || '') + '</textarea>' +
+        '<button class="btn btn-borde" style="width:100%" onclick="guardarInstrucciones()">Guardar instrucciones</button>' +
+        '<p class="nota-guardado" id="avisoInstrucciones"></p>' +
+      '</div>' +
       '<button class="btn btn-borde" style="width:100%" onclick="salir()">Cerrar sesión</button>';
   }
+
+  window.guardarInstrucciones = function () {
+    var caja = $('cajaInstrucciones');
+    var aviso = $('avisoInstrucciones');
+    if (!caja) return;
+    var texto = caja.value;
+    aviso.style.color = 'var(--tenue)';
+    aviso.textContent = 'Guardando…';
+    api('/api/instrucciones', { method: 'POST', body: JSON.stringify({ instrucciones: texto }) })
+      .then(function (r) {
+        if (!r.res.ok) {
+          aviso.style.color = 'var(--error)';
+          aviso.textContent = (r.data && r.data.error) || 'No se pudo guardar.';
+          return;
+        }
+        yo.instrucciones = r.data.instrucciones;
+        aviso.style.color = 'var(--ok)';
+        aviso.textContent = 'Guardado.';
+      })
+      .catch(function () {
+        aviso.style.color = 'var(--error)';
+        aviso.textContent = 'No se pudo guardar. Revisa tu conexión.';
+      });
+  };
 
   function vistaPaquetes() {
     if (!paquetes.length) return '<p class="nota">No se pudieron cargar los paquetes.</p>';

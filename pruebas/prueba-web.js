@@ -17,16 +17,34 @@ process.env.PORT = String(PORT);
 
 // Doble del SDK de Anthropic: se inyecta ANTES de cargar el servidor para que
 // el cliente que construye internamente sea el falso y no toque la API real.
+// server-saas.js llama a .stream() (para poder mandar la respuesta como
+// Server-Sent Events), asi que el doble imita el mismo contrato que usa el
+// SDK real: .on('text', cb) para los pedazos y .finalMessage() para el
+// mensaje completo al terminar.
 function AnthropicFake(opts) {
     this.apiKey = opts && opts.apiKey;
     this.messages = {
-        create: async function (params) {
+        stream: function (params) {
             AnthropicFake.ultimaLlamada = params;
-            return {
+            var texto = 'Respuesta simulada para la prueba.';
+            var mensajeFinal = {
                 id: 'msg_fake', type: 'message', role: 'assistant',
                 model: params.model,
-                content: [{ type: 'text', text: 'Respuesta simulada para la prueba.' }],
-                usage: { input_tokens: 1600, output_tokens: 400 }
+                content: [{ type: 'text', text: texto }],
+                usage: { input_tokens: 1600, output_tokens: 400 },
+                stop_reason: 'end_turn'
+            };
+            var listeners = {};
+            return {
+                on: function (evento, cb) { listeners[evento] = cb; return this; },
+                finalMessage: function () {
+                    return new Promise(function (resolve) {
+                        setTimeout(function () {
+                            if (listeners.text) listeners.text(texto, texto);
+                            resolve(mensajeFinal);
+                        }, 0);
+                    });
+                }
             };
         }
     };

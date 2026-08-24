@@ -146,33 +146,129 @@ larga a mitad de camino), se le agrega al final de la respuesta un aviso
 explícito («⚠️ La respuesta se cortó… Escribe "continúa"…») en vez de
 dejarla a medias en silencio. `consumo.cortada` también viaja al frontend
 como booleano por si en algún momento conviene destacarlo visualmente.
-Ojo: como el historial se reconstruye como texto plano (ver más abajo, "Las
-imágenes no quedan en el historial"), un "continúa" no retoma la tarea
-pausada tal cual la dejó Anthropic — el modelo simplemente la vuelve a
-intentar con el contexto de texto que tiene, que en la práctica funciona
-bien casi siempre.
+Ojo: un "continúa" no retoma la tarea pausada tal cual la dejó Anthropic —
+el modelo simplemente la vuelve a intentar con el contexto que tiene en el
+historial, que en la práctica funciona bien casi siempre.
 
-### Imágenes adjuntas
+### Archivos adjuntos (imagen, PDF, texto/código)
 
-`/api/chat` acepta un campo opcional `imagen: {mediaType, datos}` (JPEG, PNG,
-GIF o WEBP en base64, hasta 10MB — los límites reales de la API de Claude).
-Va directo en el mensaje como bloque `image` **antes** del texto (mejor
-resultado, según la propia guía de Anthropic), sin pasar por la Files API: es
-más simple y no hay archivos que limpiar después. El límite del body de
-Express subió de 1mb a 15mb solo por esto.
+`/api/chat` acepta tres campos opcionales, uno a la vez:
 
-El costo de una imagen ya lo cubre la fórmula normal de créditos: Claude la
-factura como tokens de entrada, así que no hace falta ningún cargo aparte
-(a diferencia de `web_search`, que sí tiene un costo propio fuera de los
-tokens).
+- `imagen: {mediaType, datos}` — JPEG, PNG, GIF o WEBP en base64, hasta 10MB
+  (límite real de la API de Claude). Va como bloque `image`.
+- `documento: {mediaType: 'application/pdf', datos, nombre}` — PDF en base64,
+  hasta ~15MB. Va como bloque `document` nativo: Claude lo lee de verdad
+  (texto, tablas, hasta páginas escaneadas), no es solo un adjunto ciego.
+- `archivoTexto: {contenido, nombre}` — cualquier archivo de texto/código de
+  la lista blanca en `EXTENSIONES_TEXTO_PERMITIDAS` (`.txt`, `.md`, `.js`,
+  `.py`, `.json`, etc.), hasta 120.000 caracteres. No hay bloque nativo para
+  esto en la API, así que se pega tal cual dentro del mensaje, envuelto en un
+  bloque de código con el nombre del archivo delante.
 
-**La imagen no queda en el historial.** En la colección `messages` se guarda
-solo el texto (con un `[imagen adjunta] ` de prefijo si hubo una), nunca el
-base64 — guardar fotos para siempre en la base no tenía sentido. Como
-consecuencia, en un turno posterior Claude ya no "ve" la imagen: solo lo que
-se haya dicho sobre ella en su momento. Si en algún momento hace falta que
-recuerde imágenes entre turnos, tocaría subirlas a la Files API de Anthropic
-y guardar el `file_id` en vez de descartarlas.
+**Word, Excel y `.zip` quedan fuera a propósito**: la API de Claude no tiene
+un bloque nativo para binarios de Office ni para archivos comprimidos, y
+convertirlos del lado del servidor (con alguna librería) es una pieza mucho
+más grande que no se justificaba para esta primera versión.
+
+Todos van **antes** del texto en el mensaje (mejor resultado, según la propia
+guía de Anthropic), sin pasar por la Files API — más simple, sin archivos que
+limpiar después. El límite del body de Express subió a 25mb para que quepa un
+PDF en base64. El costo ya lo cubre la fórmula normal de créditos (todo se
+factura como tokens de entrada); ninguno tiene cargo aparte.
+
+**Los adjuntos SÍ quedan en el historial.** Antes solo se guardaba un
+`[imagen adjunta] ` de texto y la imagen se perdía en el siguiente turno.
+Ahora `messages.insertOne` guarda el mismo `content` que se le mandó a
+Claude (bloques de imagen/documento incluidos), así que mientras el turno
+siga dentro de la ventana de `MENSAJES_DE_HISTORIAL`, Claude lo sigue
+"viendo" en los mensajes siguientes de la misma conversación. Contrapartida
+conocida: la base de datos crece con el base64 de cada adjunto en vez de
+quedarse solo con texto — aceptable para esta primera versión, pero si el
+volumen de adjuntos crece mucho, tocaría migrar a la Files API de Anthropic
+(subir una vez, guardar el `file_id`) en vez de guardar el binario cada vez.
+
+### Memoria de la conversación
+
+`MENSAJES_DE_HISTORIAL` subió de 10 a **30** mensajes de contexto. En 10, una
+charla un poco larga "olvidaba" el principio; en 30 aguanta bastante más
+antes de perder contexto. El costo en tokens (y por lo tanto en créditos) de
+mandar más historial lo paga cada quien vía su propio saldo, así que subirlo
+no le cuesta nada a la cuenta de LunaticoIA.
+
+### Instrucciones personalizadas
+
+Desde "Mi cuenta" cada usuario puede guardar sus propias instrucciones (tono,
+idioma, qué tan detallada quiere la respuesta, etc.) vía
+`POST /api/instrucciones` — hasta 600 caracteres, se guardan en
+`user.instrucciones`. `construirSystemPrompt(user)` las pega al final de
+`SYSTEM_PROMPT_BASE` en cada llamada a Claude; nunca lo reemplazan, así que
+las reglas de seguridad de arriba (lo del sandbox de `code_execution`) siempre
+se respetan aunque alguien intente escribir instrucciones que las contradigan.
+
+### `/api/chat` responde en streaming (Server-Sent Events)
+
+Antes se esperaba a que Claude terminara toda la respuesta y se mandaba de
+un solo golpe con `res.json(...)`. Ahora `/api/chat` usa
+`claudeClient.messages.stream(...)` (en vez de `.create(...)`) y responde con
+`Content-Type: text/event-stream`: el texto llega en pedazos, en el orden en
+que Claude lo va generando, y el frontend lo va mostrando a medida que llega
+en vez de mostrar el indicador de "Pensando" hasta que todo esté listo.
+
+Cada pedazo es una línea `data: {...}\n\n` con un campo `tipo`:
+
+- `{tipo:'delta', texto:'...'}` — un pedazo nuevo de texto.
+- `{tipo:'fin', response:'...', consumo:{...}}` — la respuesta completa y el
+  mismo objeto `consumo` que antes iba en el único `res.json(...)`.
+- `{tipo:'error', mensaje:'...'}` — algo falló (ver el punto siguiente).
+
+**Consecuencia importante: el código HTTP 200 sale ANTES de saber si Claude
+va a responder bien.** Con streaming no hay forma de "esperar a ver si
+funciona" antes de comprometerse a un código de estado — en el momento en
+que empieza a salir el primer byte, el código ya tiene que estar decidido.
+Por eso:
+
+- Los rechazos que se detectan ANTES de llamar a Claude (sin créditos → 402,
+  modelo inválido → 400, correo sin verificar → 403, etc.) siguen siendo
+  códigos HTTP normales con JSON, exactamente como antes — nada cambió ahí.
+- Pero si Claude falla DESPUÉS de haber empezado el stream (API caída, clave
+  inválida, lo que sea), la respuesta ya salió como `200 text/event-stream`
+  y el error se manda como un evento `{tipo:'error'}` dentro del stream, no
+  como un código 500. `fallo()` en `server-saas.js` revisa `res.headersSent`
+  para saber cuál de las dos formas usar.
+- **Esto rompió una prueba existente** (`pruebas/test-creditos.js`, "Si la
+  API de Claude falla, NO se descuenta saldo"): antes esperaba `HTTP 500`,
+  ahora espera `HTTP 200` con un evento `{tipo:'error'}` en el cuerpo. Si se
+  toca esa prueba de nuevo, ojo con esto — no es un bug, es como tiene que
+  comportarse un stream de verdad.
+
+El resto del flujo (cobrar créditos, guardar en el historial, detectar
+`stop_reason` cortado) sigue pasando exactamente en el mismo punto que
+antes, solo que ahora es el último evento (`fin`) el que lo carga en vez de
+la única respuesta JSON.
+
+### Botón de descargar código
+
+Cada bloque de código en una respuesta trae dos botones: "Copiar" (ya
+existía) y "Descargar", que arma un `Blob` en el navegador y lo baja como
+archivo — todo del lado del cliente, no pasa por el servidor. La extensión
+del archivo sale del lenguaje que puso el modelo después de los ```` ``` ````
+(`EXTENSION_POR_LENGUAJE` en `index.html`); si no lo reconoce, cae a `.txt`.
+
+### Voz (dictado y lectura en voz alta)
+
+Usa la Web Speech API nativa del navegador — **gratis, sin cuenta ni API key
+de nadie**, por eso se implementó sin preguntar. Dos partes independientes:
+
+- **Dictado** (botón de micrófono junto al clip): usa
+  `SpeechRecognition`/`webkitSpeechRecognition` para transcribir y meter el
+  texto en el campo de mensaje. Si el navegador no lo soporta (Firefox, la
+  mayoría de Safari), el botón se esconde solo — no rompe nada.
+- **Leer en voz alta** (botón que aparece bajo cada respuesta de la IA): usa
+  `speechSynthesis`. Antes de leer, reemplaza los bloques de código por
+  "bloque de código" para no leer código en voz alta línea por línea.
+
+Ambas funcionan mejor en Chrome/Edge; el resto de navegadores puede no tener
+una u otra, y la interfaz se adapta sola sin mostrar errores.
 
 ---
 
@@ -183,8 +279,9 @@ y guardar el `file_id` en vez de descartarlas.
 | `GET` | `/api/health` | Estado del servicio |
 | `POST` | `/api/register` | `{name, email, password}` · 5 por hora e IP |
 | `POST` | `/api/login` | `{email, password}` · 20 cada 15 min e IP |
-| `GET` | `/api/stats` | Saldo y modos disponibles · requiere token |
-| `POST` | `/api/chat` | `{message, modelo}` · 20 por minuto · 402 si no hay saldo |
+| `GET` | `/api/stats` | Saldo, modos disponibles e instrucciones personalizadas · requiere token |
+| `POST` | `/api/instrucciones` | `{instrucciones}` · máx. 600 caracteres · se pegan al system prompt de cada chat |
+| `POST` | `/api/chat` | `{message, modelo, imagen?, documento?, archivoTexto?}` · 20 por minuto · 402 si no hay saldo |
 | `GET` | `/api/paquetes` | Catálogo, público |
 | `POST` | `/api/comprar` | `{paquete}` · devuelve la firma para el checkout |
 | `POST` | `/api/webhook` | Wompi · verifica firma, idempotente |
@@ -296,6 +393,9 @@ va a pagar.
 ~~5. Poner `RESEND_API_KEY` en Railway~~ — hecho: el correo (verificación de
 cuenta y recuperación de contraseña) está activo en producción desde el
 24 de agosto de 2026, usando la API HTTP de Resend.
+
+~~6. Streaming de respuestas~~ — hecho: `/api/chat` responde en Server-Sent
+Events, ver "`/api/chat` responde en streaming" más arriba.
 
 Y sin prisa: respaldos de la base, alojar las tipografías en el servidor, subir
 de Node 14 a Node 20, e historial de conversaciones.

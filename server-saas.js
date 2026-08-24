@@ -25,10 +25,10 @@ const app = express();
 app.set('trust proxy', 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
-// 15mb porque /api/chat acepta una imagen adjunta en base64 (hasta 10mb
-// codificada, el limite de la API de Claude); el resto de las rutas mandan
-// cuerpos chiquitos, asi que este limite mas alto no les cambia nada.
-app.use(express.json({ limit: '15mb' }));
+// 25mb porque /api/chat acepta una imagen o un PDF adjunto en base64; el
+// resto de las rutas mandan cuerpos chiquitos, asi que este limite mas alto
+// no les cambia nada.
+app.use(express.json({ limit: '25mb' }));
 
 let db;
 const client = new MongoClient(process.env.MONGODB_URI);
@@ -57,7 +57,7 @@ const PESO_SALIDA = 5;
 // persona). Caso real que motivo este mensaje: el usuario pidio una pagina
 // web, la IA "la guardo" en el sandbox y aseguro que ya estaba en la carpeta
 // de Descargas del usuario -- no habia nada ahi, por supuesto.
-const SYSTEM_PROMPT = [
+const SYSTEM_PROMPT_BASE = [
     'Eres LunaticoIA, un asistente conversacional.',
     '',
     'Sobre la herramienta code_execution: corre en un sandbox aislado de ' +
@@ -81,6 +81,22 @@ const SYSTEM_PROMPT = [
         'persona si no es cierto. Si no estas segura de si algo funciono, ' +
         'dilo con esa incertidumbre en vez de afirmarlo con seguridad.'
 ].join('\n');
+
+const MAX_CARACTERES_INSTRUCCIONES = 600;
+
+// Cada usuario puede guardar sus propias instrucciones (tono, idioma,
+// formato preferido, etc.) desde "Mi cuenta". Van pegadas al system prompt
+// base, nunca lo reemplazan -- asi las reglas de seguridad de arriba
+// (lo del sandbox de code_execution) siempre se respetan.
+function construirSystemPrompt(user) {
+    const instrucciones = user && typeof user.instrucciones === 'string' ? user.instrucciones.trim() : '';
+    if (!instrucciones) return SYSTEM_PROMPT_BASE;
+    return SYSTEM_PROMPT_BASE + '\n\n' +
+        'Instrucciones personalizadas de la persona que te escribe (sobre ' +
+        'como prefiere que le hables, tono, idioma, formato, etc. -- ' +
+        'siguelas salvo que choquen con las reglas de arriba):\n' +
+        instrucciones;
+}
 
 // Herramientas que la IA puede usar en cada respuesta: buscar en internet y
 // abrir/leer paginas web, y correr codigo (Python/Bash) en un sandbox propio
@@ -106,6 +122,21 @@ const CREDITOS_POR_BUSQUEDA = 10;
 const TIPOS_IMAGEN_PERMITIDOS = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const MAX_BASE64_IMAGEN = 14 * 1024 * 1024; // ~10MB reales, con margen del inflado de base64
 
+// PDF: va como bloque "document" nativo de la API, Claude lo lee de verdad
+// (texto, tablas, incluso paginas escaneadas). Word/Excel/zip NO los soporta
+// la API directamente, asi que esos se quedan fuera por ahora.
+const MAX_BASE64_DOCUMENTO = 20 * 1024 * 1024; // ~15MB reales de PDF
+
+// Archivos de texto/codigo: no hay bloque especial para esto, se pegan como
+// texto plano dentro del mensaje (envueltos en un bloque de codigo) para que
+// Claude los lea como parte de la conversacion.
+const MAX_CARACTERES_ARCHIVO_TEXTO = 120000; // generoso mismo asi de sobra
+const EXTENSIONES_TEXTO_PERMITIDAS = [
+    'txt', 'md', 'csv', 'json', 'yml', 'yaml', 'xml', 'log',
+    'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp', 'cs',
+    'go', 'rb', 'php', 'html', 'css', 'scss', 'sql', 'sh', 'env'
+];
+
 // Multiplicadores = precio de entrada de cada modelo dividido entre el de
 // Rápido (Haiku, $1/MTok): Sonnet $2, Opus $5, Fable $10 -> 1 : 2(*) : 5 : 10.
 // (*) Equilibrado quedó en 3x desde antes de que Sonnet bajara de precio; no
@@ -125,7 +156,10 @@ const CREDITOS_DE_BIENVENIDA = 100;
 // de camino sin avisar -- el usuario veia "aqui voy..." y despues nada, sin
 // forma de saber si seguia trabajando o se habia quedado pegado.
 const MAX_TOKENS_RESPUESTA = 16384;
-const MENSAJES_DE_HISTORIAL = 10;
+// Antes en 10: una conversacion un poco larga "olvidaba" el principio. En 30
+// aguanta charlas mas largas sin perder contexto; el costo en tokens lo paga
+// cada quien via creditos, asi que subirlo no le cuesta nada a la cuenta.
+const MENSAJES_DE_HISTORIAL = 30;
 
 const PAQUETES = {
     prueba:  { creditos: 400,   precioCOP: 9900,   nombre: 'Prueba'  },
@@ -139,6 +173,14 @@ const PAQUETES = {
 // API de Anthropic con su request_id dentro del chat.
 function fallo(res, codigo, publico, error, contexto) {
     console.error('✗ ' + contexto + ':', (error && error.message) || error);
+    // /api/chat manda la respuesta como Server-Sent Events: si el fallo pasa
+    // DESPUES de que los headers ya salieron como "200 text/event-stream", ya
+    // no se puede cambiar el codigo de estado -- el error se manda como un
+    // evento mas dentro del stream, y el cliente lo interpreta igual.
+    if (res.headersSent) {
+        try { res.write('data: ' + JSON.stringify({ tipo: 'error', mensaje: publico }) + '\n\n'); } catch (e) {}
+        return res.end();
+    }
     res.status(codigo).json({ error: publico });
 }
 
@@ -529,6 +571,8 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
             creditosPorBusqueda: CREDITOS_POR_BUSQUEDA,
             emailVerified: user.emailVerified,
             correoConfigurado: CORREO_CONFIGURADO,
+            instrucciones: typeof user.instrucciones === 'string' ? user.instrucciones : '',
+            maxCaracteresInstrucciones: MAX_CARACTERES_INSTRUCCIONES,
             modelos: Object.keys(MODELOS).map((k) => ({
                 clave: k,
                 etiqueta: MODELOS[k].etiqueta,
@@ -537,6 +581,21 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
         });
     } catch (error) {
         fallo(res, 500, 'No pudimos cargar los datos de tu cuenta.', error, 'stats');
+    }
+});
+
+app.post('/api/instrucciones', authenticateToken, async (req, res) => {
+    try {
+        const texto = typeof req.body.instrucciones === 'string' ? req.body.instrucciones.trim() : '';
+        if (texto.length > MAX_CARACTERES_INSTRUCCIONES) {
+            return res.status(400).json({ error: 'Máximo ' + MAX_CARACTERES_INSTRUCCIONES + ' caracteres' });
+        }
+        const users = db.collection('users');
+        const userId = new ObjectId(req.user.userId);
+        await users.updateOne({ _id: userId }, { $set: { instrucciones: texto } });
+        res.json({ instrucciones: texto });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos guardar tus instrucciones.', error, 'instrucciones');
     }
 });
 
@@ -668,9 +727,9 @@ app.post('/api/resetear-password', recuperarLimiter, async (req, res) => {
 
 app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
     try {
-        const { message, imagen } = req.body;
+        const { message, imagen, documento, archivoTexto } = req.body;
         const claveModelo = req.body.modelo || MODELO_POR_DEFECTO;
-        const mensajeTexto = typeof message === 'string' ? message.trim() : '';
+        let mensajeTexto = typeof message === 'string' ? message.trim() : '';
 
         let imagenValida = null;
         if (imagen != null) {
@@ -686,7 +745,40 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             imagenValida = { mediaType: imagen.mediaType, datos: imagen.datos };
         }
 
-        if (!mensajeTexto && !imagenValida) {
+        let documentoValido = null;
+        if (documento != null) {
+            if (
+                typeof documento !== 'object' ||
+                documento.mediaType !== 'application/pdf' ||
+                typeof documento.datos !== 'string' ||
+                !documento.datos ||
+                documento.datos.length > MAX_BASE64_DOCUMENTO
+            ) {
+                return res.status(400).json({ error: 'PDF no válido' });
+            }
+            documentoValido = {
+                mediaType: documento.mediaType,
+                datos: documento.datos,
+                nombre: typeof documento.nombre === 'string' ? documento.nombre.slice(0, 200) : 'documento.pdf'
+            };
+        }
+
+        // Sin bloque nativo para esto: se pega como texto dentro del mensaje,
+        // envuelto en un bloque de codigo con el nombre del archivo delante.
+        if (archivoTexto != null) {
+            if (
+                typeof archivoTexto !== 'object' ||
+                typeof archivoTexto.contenido !== 'string' ||
+                !archivoTexto.contenido ||
+                archivoTexto.contenido.length > MAX_CARACTERES_ARCHIVO_TEXTO
+            ) {
+                return res.status(400).json({ error: 'Archivo de texto no válido' });
+            }
+            const nombreArchivo = typeof archivoTexto.nombre === 'string' ? archivoTexto.nombre.slice(0, 200) : 'archivo.txt';
+            mensajeTexto = 'Archivo adjunto "' + nombreArchivo + '":\n```\n' + archivoTexto.contenido + '\n```\n\n' + mensajeTexto;
+        }
+
+        if (!mensajeTexto && !imagenValida && !documentoValido) {
             return res.status(400).json({ error: 'Message cannot be empty' });
         }
         if (!MODELOS[claveModelo]) {
@@ -735,38 +827,59 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             messagesForClaude.shift();
         }
 
-        // La imagen va antes del texto (asi rinde mejor, segun la propia
-        // guia de Anthropic) y como bloques, no como string; sin imagen se
+        // La imagen/PDF van antes del texto (asi rinde mejor, segun la propia
+        // guia de Anthropic) y como bloques, no como string; sin adjuntos se
         // manda el texto solo, igual que antes.
-        messagesForClaude.push({
-            role: 'user',
-            content: imagenValida
-                ? [
-                      { type: 'image', source: { type: 'base64', media_type: imagenValida.mediaType, data: imagenValida.datos } },
-                      { type: 'text', text: mensajeTexto || 'Mira esta imagen.' }
-                  ]
-                : mensajeTexto
-        });
+        let contenidoUsuario = mensajeTexto;
+        if (imagenValida || documentoValido) {
+            contenidoUsuario = [];
+            if (imagenValida) {
+                contenidoUsuario.push({ type: 'image', source: { type: 'base64', media_type: imagenValida.mediaType, data: imagenValida.datos } });
+            }
+            if (documentoValido) {
+                contenidoUsuario.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: documentoValido.datos } });
+            }
+            contenidoUsuario.push({ type: 'text', text: mensajeTexto || 'Mira este archivo.' });
+        }
+        messagesForClaude.push({ role: 'user', content: contenidoUsuario });
 
-        const response = await claudeClient.messages.create({
+        // A partir de aqui la respuesta va como Server-Sent Events: el texto
+        // llega en pedazos a medida que Claude lo genera (en vez de esperar
+        // a que termine toda la respuesta) y el frontend lo va mostrando.
+        // Los 400/402/403/404 de arriba pasan ANTES de este punto porque
+        // hasta aca no sabemos todavia si la llamada a Claude va a andar --
+        // una vez que se manda el codigo 200 ya no se puede cambiar, asi que
+        // cualquier error posterior (incluido que la API falle) se manda
+        // como un evento mas dentro del stream, nunca como otro codigo HTTP.
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache, no-transform',
+            Connection: 'keep-alive',
+            'X-Accel-Buffering': 'no'
+        });
+        function evento(obj) {
+            res.write('data: ' + JSON.stringify(obj) + '\n\n');
+        }
+
+        let aiMessage = '';
+        const stream = claudeClient.messages.stream({
             model: modelo.id,
             max_tokens: MAX_TOKENS_RESPUESTA,
-            system: SYSTEM_PROMPT,
+            system: construirSystemPrompt(user),
             messages: messagesForClaude,
             tools: HERRAMIENTAS_IA
         });
+        // El evento 'text' trae el pedacito nuevo de texto (no el acumulado),
+        // en el mismo orden en que Claude lo va generando -- juntarlos en
+        // orden reconstruye la respuesta completa, igual que antes se hacia
+        // uniendo los bloques de texto de la respuesta ya terminada.
+        stream.on('text', (delta) => {
+            aiMessage += delta;
+            evento({ tipo: 'delta', texto: delta });
+        });
 
-        // Con herramientas de por medio la respuesta trae varios bloques de
-        // texto intercalados con los de busqueda/lectura/codigo (p.ej. "voy a
-        // buscar..." + resultados + la respuesta final): hay que juntarlos
-        // todos, no solo quedarse con el primero.
-        let aiMessage = '';
-        if (response.content && Array.isArray(response.content)) {
-            aiMessage = response.content
-                .filter((i) => i.type === 'text')
-                .map((i) => i.text)
-                .join('');
-        }
+        const response = await stream.finalMessage();
+
         if (!aiMessage) throw new Error('Invalid response from Claude API');
 
         // Si la respuesta se corto (llego al limite de tokens, o Anthropic la
@@ -775,11 +888,13 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         // paso -- como si la IA se hubiera quedado pegada. Se avisa explicito.
         const cortada = response.stop_reason === 'max_tokens' || response.stop_reason === 'pause_turn';
         if (cortada) {
-            aiMessage += (aiMessage ? '\n\n' : '') + '⚠️ *La respuesta se cortó antes de terminar' +
+            const avisoCorte = (aiMessage ? '\n\n' : '') + '⚠️ *La respuesta se cortó antes de terminar' +
                 (response.stop_reason === 'max_tokens'
                     ? ' (llegó al límite de longitud)'
                     : ' (una búsqueda o ejecución de código larga quedó a medias)') +
                 '. Escribe "continúa" para que siga.*';
+            aiMessage += avisoCorte;
+            evento({ tipo: 'delta', texto: avisoCorte });
         }
 
         // Se cobra DESPUÉS de una respuesta correcta: si la API falla, el
@@ -788,15 +903,14 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         const cobro = creditosDe(response.usage, modelo.multiplicador);
         const nuevoSaldo = ilimitado ? user.creditBalance : Math.max(0, user.creditBalance - cobro);
 
-        // El historial guarda solo texto, nunca la imagen: no tiene sentido
-        // acumular fotos en la base para siempre, y evita que cada turno
-        // futuro tenga que volver a mandarle a Claude las imagenes viejas.
-        // Consecuencia: en un turno posterior Claude ya no "ve" la imagen,
-        // solo lo que se haya dicho sobre ella.
+        // Se guarda el mismo contenido que se le mando a Claude (con imagen o
+        // PDF incluidos si los hubo): asi, mientras el turno siga dentro de
+        // la ventana de historial (MENSAJES_DE_HISTORIAL), Claude los sigue
+        // "viendo" en los siguientes mensajes de la misma conversacion.
         const guardadoEn = new Date();
         await messages.insertOne({
             userId, role: 'user',
-            content: (imagenValida ? '[imagen adjunta] ' : '') + mensajeTexto,
+            content: contenidoUsuario,
             createdAt: guardadoEn
         });
         await messages.insertOne({
@@ -809,7 +923,8 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         }
 
         const uso = response.usage || {};
-        res.json({
+        evento({
+            tipo: 'fin',
             response: aiMessage,
             consumo: {
                 modelo: modelo.etiqueta,
@@ -823,6 +938,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
                 cortada: cortada
             }
         });
+        res.end();
     } catch (error) {
         fallo(res, 500, 'No pudimos generar la respuesta. No se te descontó ningún crédito.', error, 'chat');
     }
