@@ -139,6 +139,28 @@ la creó, LunaticoIA responda con el nombre del dueño (Kevin David González
 Hurtado, de Neiva, Huila). Es una respuesta fija, no algo que el modelo deba
 inventar o adivinar.
 
+### La IA no buscaba en internet aunque tenía la herramienta (27 de agosto de 2026)
+
+Caso real reportado: alguien le preguntó por sismos recientes en Colombia y
+la IA (en modo Rápido) contestó que no tenía información actualizada y mandó
+a la persona a revisar el Servicio Geológico Colombiano por su cuenta — a
+pesar de que `web_search` está activo en `HERRAMIENTAS_IA` desde hace rato.
+
+La causa: la herramienta estaba disponible, pero `SYSTEM_PROMPT_BASE` nunca
+le decía AL MODELO cuándo usarla. Sin esa instrucción, sobre todo el modelo
+Rápido (el más económico) prefiere admitir que no sabe algo en vez de buscar
+por su cuenta. Se agregó una instrucción explícita: para preguntas sobre algo
+que cambia con el tiempo (noticias, sismos, precios, resultados deportivos,
+clima, etc.), tiene que buscar con la herramienta y nunca mandar a la persona
+a buscarlo ella misma.
+
+No se pudo verificar el comportamiento nuevo contra la API real antes de
+desplegar (no hay forma de simular con certeza si Claude decide usar una
+herramienta sin pegarle a la API real, y no hay una cuenta de prueba
+verificada a la mano) — se verificó que el system prompt se arma bien
+(pruebas automatizadas con doble del SDK) y se desplegó; la confirmación de
+que ahora sí busca quedó pendiente de una prueba real después del deploy.
+
 ### Respuestas cortadas (`stop_reason`)
 
 `MAX_TOKENS_RESPUESTA` subió de 1.024 a 4.096 (por lo del punto anterior) y
