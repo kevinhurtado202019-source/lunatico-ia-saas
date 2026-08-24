@@ -61,6 +61,32 @@
       radial-gradient(50rem 36rem at 8% 108%, rgba(96,120,200,.06), transparent 60%);
   }
 
+  /* Fondo tipo aurora detras de toda la pagina: un disco de colores muy
+     difuminado que gira despacio. mix-blend-mode:screen + opacidad baja
+     para que quede como un resplandor de fondo, no un degradado encima del
+     contenido. Vive detras de #landing/#app (z-index:1), igual que el
+     cielo sutil de arriba. */
+  body::after {
+    content: "";
+    position: fixed; top: 50%; left: 50%; z-index: 0; pointer-events: none;
+    width: 150vmax; height: 150vmax;
+    transform: translate(-50%, -50%);
+    background: conic-gradient(from 0deg,
+      rgba(232,200,138,.5), rgba(236,138,128,.45), rgba(107,199,154,.4),
+      rgba(96,120,200,.5), rgba(168,140,232,.45), rgba(232,200,138,.5));
+    filter: blur(120px);
+    opacity: .26;
+    mix-blend-mode: screen;
+    animation: aurora-girar 90s linear infinite;
+  }
+  @keyframes aurora-girar {
+    from { transform: translate(-50%, -50%) rotate(0deg); }
+    to   { transform: translate(-50%, -50%) rotate(360deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    body::after { animation: none; }
+  }
+
   button, input, textarea, select { font: inherit; color: inherit; }
   button { cursor: pointer; border: none; background: none; }
   :focus-visible { outline: 2px solid var(--luna); outline-offset: 2px; border-radius: 6px; }
