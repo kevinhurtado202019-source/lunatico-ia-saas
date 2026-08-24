@@ -108,10 +108,18 @@
   @keyframes marca-girar { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .marca-logo-cintas { animation: none; } }
 
-  /* En el chat el logo se queda oculto y solo aparece mientras LunaticoIA
-     esta generando una respuesta, como indicador de que esta "pensando". */
-  .barra .marca-logo { opacity: 0; transform: scale(.6); transition: opacity .2s ease, transform .2s ease; }
-  .barra .marca-logo.respondiendo { opacity: 1; transform: scale(1); }
+  /* En el chat el logo esta siempre visible arriba (como en el resto del
+     sitio); mientras LunaticoIA esta generando una respuesta, ademas brilla,
+     crece un poco y gira mas rapido, como indicador de que esta "pensando". */
+  .barra .marca-logo { transition: transform .25s ease, filter .25s ease; }
+  .barra .marca-logo.respondiendo {
+    transform: scale(1.15);
+    filter: drop-shadow(0 0 7px var(--luna));
+  }
+  .barra .marca-logo.respondiendo .marca-logo-cintas { animation-duration: 2.4s; }
+  @media (prefers-reduced-motion: reduce) {
+    .barra .marca-logo.respondiendo { filter: none; }
+  }
 
 
   /* ===================== LANDING ===================== */
