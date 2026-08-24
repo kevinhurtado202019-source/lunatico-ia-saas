@@ -1476,8 +1476,16 @@
   // ---------------- estado ----------------
 
   function pintarSaldo() {
-    var s = yo ? yo.creditBalance : 0;
     var el = $('numSaldo');
+
+    if (yo && yo.creditosIlimitados) {
+      $('chipSaldo').classList.remove('vacio');
+      saldoMostrado = null;
+      el.textContent = '∞';
+      return;
+    }
+
+    var s = yo ? yo.creditBalance : 0;
     $('chipSaldo').classList.toggle('vacio', s <= 0);
 
     var previo = saldoMostrado;

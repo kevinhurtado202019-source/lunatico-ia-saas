@@ -456,6 +456,7 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
             email: user.email,
             name: user.name || user.email.split('@')[0],
             creditBalance: user.creditBalance,
+            creditosIlimitados: user.creditosIlimitados === true,
             emailVerified: user.emailVerified,
             correoConfigurado: CORREO_CONFIGURADO,
             modelos: Object.keys(MODELOS).map((k) => ({
@@ -624,7 +625,9 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             });
         }
 
-        if (user.creditBalance <= 0) {
+        const ilimitado = user.creditosIlimitados === true;
+
+        if (!ilimitado && user.creditBalance <= 0) {
             return res.status(402).json({
                 error: 'Sin créditos',
                 creditBalance: 0,
@@ -663,9 +666,10 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         if (!aiMessage) throw new Error('Invalid response from Claude API');
 
         // Se cobra DESPUÉS de una respuesta correcta: si la API falla, el
-        // usuario no pierde saldo.
+        // usuario no pierde saldo. Las cuentas con creditosIlimitados nunca
+        // bajan de saldo (pensadas para el propio creador de LunaticoIA).
         const cobro = creditosDe(response.usage, modelo.multiplicador);
-        const nuevoSaldo = Math.max(0, user.creditBalance - cobro);
+        const nuevoSaldo = ilimitado ? user.creditBalance : Math.max(0, user.creditBalance - cobro);
 
         const guardadoEn = new Date();
         await messages.insertOne({
@@ -676,7 +680,9 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             createdAt: new Date(guardadoEn.getTime() + 1)
         });
 
-        await users.updateOne({ _id: userId }, { $set: { creditBalance: nuevoSaldo } });
+        if (!ilimitado) {
+            await users.updateOne({ _id: userId }, { $set: { creditBalance: nuevoSaldo } });
+        }
 
         res.json({
             response: aiMessage,
@@ -685,7 +691,8 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
                 tokensEntrada: response.usage ? response.usage.input_tokens : null,
                 tokensSalida: response.usage ? response.usage.output_tokens : null,
                 creditosCobrados: cobro,
-                creditBalance: nuevoSaldo
+                creditBalance: nuevoSaldo,
+                creditosIlimitados: ilimitado
             }
         });
     } catch (error) {
