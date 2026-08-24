@@ -233,12 +233,10 @@ va a pagar.
    mismo problema que el del nombre del comercio.
 3. Poner las tres llaves de Wompi y configurar el webhook.
 4. Un pago de prueba de punta a punta.
-5. Poner `RESEND_API_KEY` en Railway (ver arriba) para activar la
-   verificación de correo y la recuperación de contraseña — el código ya está,
-   pero sin esa variable queda apagado igual que Wompi sin sus llaves. (Antes
-   había variables `SMTP_*` con las credenciales de Resend, pero por SMTP
-   nunca llegaban a conectar porque Railway bloquea esos puertos — ver
-   "Cosas que conviene no romper".)
+
+~~5. Poner `RESEND_API_KEY` en Railway~~ — hecho: el correo (verificación de
+cuenta y recuperación de contraseña) está activo en producción desde el
+24 de agosto de 2026, usando la API HTTP de Resend.
 
 Y sin prisa: respaldos de la base, alojar las tipografías en el servidor, subir
 de Node 14 a Node 20, e historial de conversaciones.
