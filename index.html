@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>LunaticoIA</title>
 <meta name="description" content="Conversa con IA. Compra créditos, sin suscripción.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230B0E17'/%3E%3Cpath d='M20.5 20.8a7.2 7.2 0 0 1-8.9-9.6 7.6 7.6 0 1 0 8.9 9.6z' fill='%23E8C88A'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230B0E17'/%3E%3Cpath d='M12 8v11a5 5 0 0 0 5 5h6' stroke='%237F56D9' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Public+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
@@ -20,9 +20,9 @@
     --texto:        #E9EBF3;
     --suave:        #A7B0C6;
     --tenue:        #8C97AE;   /* 4.74 minimo sobre los fondos usados (AA) */
-    --luna:         #E8C88A;
-    --luna-viva:    #F2D9A6;
-    --luna-fondo:   #2A2317;
+    --luna:         #7F56D9;   /* morado de Nequi (rgb(127,86,217), tomado de su sitio real) */
+    --luna-viva:    #A78BFA;   /* mas claro: 5.9 de contraste sobre --noche, para texto chico */
+    --luna-fondo:   #241B3D;
     --ok:           #6BC79A;
     --alerta:       #E3A863;
     --error:        #EC8A80;
@@ -57,7 +57,7 @@
     content: "";
     position: fixed; inset: 0; pointer-events: none; z-index: 0;
     background:
-      radial-gradient(60rem 40rem at 78% -12%, rgba(232,200,138,.055), transparent 62%),
+      radial-gradient(60rem 40rem at 78% -12%, rgba(127,86,217,.06), transparent 62%),
       radial-gradient(50rem 36rem at 8% 108%, rgba(96,120,200,.06), transparent 60%);
   }
 
@@ -124,7 +124,7 @@
   .btn-texto:hover { color: var(--texto); background: var(--alta); }
 
   /* Mas especifico que .btn-luna, que se define despues y traeria width:100% */
-  .btn.btn-luna-auto { background: var(--luna); color: #21180A; width: auto; }
+  .btn.btn-luna-auto { background: var(--luna); color: #F7F5FC; width: auto; }
 
   .hero {
     position: relative; overflow: hidden;
@@ -273,11 +273,11 @@
     transition: border-color .15s, transform .15s;
   }
   .plan:hover { border-color: var(--borde); transform: translateY(-2px); }
-  .plan.destacado { border-color: rgba(232,200,138,.45); background: var(--alta); }
+  .plan.destacado { border-color: rgba(127,86,217,.45); background: var(--alta); }
   .plan .cinta {
     font-family: var(--ui); font-size: 10px; font-weight: 600;
     letter-spacing: .09em; text-transform: uppercase;
-    color: var(--luna); margin-bottom: 4px;
+    color: var(--luna-viva); margin-bottom: 4px;
   }
   .plan h3 {
     font-family: var(--display); font-weight: 600; font-size: 18px;
@@ -377,7 +377,7 @@
   }
   .btn:hover { filter: brightness(1.08); }
   .btn:disabled { opacity: .5; cursor: not-allowed; filter: none; }
-  .btn-luna { background: var(--luna); color: #21180A; width: 100%; }
+  .btn-luna { background: var(--luna); color: #F7F5FC; width: 100%; }
   .btn-borde {
     background: transparent; border: 1px solid var(--borde); color: var(--texto);
   }
@@ -450,7 +450,7 @@
   .saldo b {
     font-family: var(--mono); font-weight: 600;
     font-variant-numeric: tabular-nums;
-    color: var(--luna); font-size: 14.5px;
+    color: var(--luna-viva); font-size: 14.5px;
   }
   .saldo span { color: var(--tenue); font-size: 13px; }
   .saldo.vacio { border-color: rgba(236,138,128,.5); }
@@ -498,7 +498,7 @@
     max-width: 80%;
   }
   .turno.ia .texto { font-size: 16.5px; line-height: 1.72; max-width: 34em; }
-  .turno.ia .quien { color: var(--luna); }
+  .turno.ia .quien { color: var(--luna-viva); }
 
   .consumo {
     margin-top: 9px; font-family: var(--mono); font-size: 11.5px;
@@ -580,7 +580,7 @@
 
   .enviar {
     margin-left: auto; width: 36px; height: 36px; border-radius: 10px;
-    background: var(--luna); color: #21180A;
+    background: var(--luna); color: #F7F5FC;
     display: grid; place-items: center;
     transition: opacity .15s, filter .15s;
   }
@@ -641,7 +641,7 @@
   .dato:last-child { border-bottom: none; }
   .dato span { color: var(--tenue); }
   .dato b { font-weight: 600; }
-  .dato b.num { font-family: var(--mono); color: var(--luna); font-variant-numeric: tabular-nums; }
+  .dato b.num { font-family: var(--mono); color: var(--luna-viva); font-variant-numeric: tabular-nums; }
 
   .paquete {
     background: var(--alta);
@@ -653,7 +653,7 @@
     transition: border-color .15s;
   }
   .paquete:hover { border-color: var(--borde); }
-  .paquete.destacado { border-color: rgba(232,200,138,.45); background: var(--mas-alta); }
+  .paquete.destacado { border-color: rgba(127,86,217,.45); background: var(--mas-alta); }
 
   .paquete .info { flex: 1; min-width: 0; }
   .paquete .nombre {
@@ -663,7 +663,7 @@
   .etiqueta {
     font-family: var(--ui); font-size: 10px; font-weight: 600;
     letter-spacing: .08em; text-transform: uppercase;
-    background: var(--luna-fondo); color: var(--luna);
+    background: var(--luna-fondo); color: var(--luna-viva);
     padding: 2px 7px; border-radius: 4px;
   }
   .paquete .detalle {
@@ -720,7 +720,7 @@
 <div id="landing">
   <div class="lp">
     <nav class="lp-nav">
-      <div class="marca"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M15.8 15.4A8 8 0 0 1 8.6 4.1a8.4 8.4 0 1 0 7.2 11.3z"/></svg> LunaticoIA</div>
+      <div class="marca"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" fill="currentColor"/><path d="M9 6.6V15a2.7 2.7 0 0 0 2.7 2.7H17" stroke="#0B0E17" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg> LunaticoIA</div>
       <div class="empuje"></div>
       <button class="btn-texto" onclick="irAcceso('entrar')">Entrar</button>
       <button class="btn btn-luna btn-luna-auto" onclick="irAcceso('crear')">Empezar gratis</button>
@@ -829,7 +829,7 @@
     </section>
 
     <footer class="lp-pie">
-      <div class="marca" style="font-size:15px;color:var(--tenue)"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M15.8 15.4A8 8 0 0 1 8.6 4.1a8.4 8.4 0 1 0 7.2 11.3z"/></svg> LunaticoIA</div>
+      <div class="marca" style="font-size:15px;color:var(--tenue)"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" fill="currentColor"/><path d="M9 6.6V15a2.7 2.7 0 0 0 2.7 2.7H17" stroke="#0B0E17" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg> LunaticoIA</div>
       <div class="empuje"></div>
       <span>Pagos procesados por Wompi</span>
     </footer>
@@ -840,7 +840,7 @@
 <div id="acceso" class="oculto">
   <div class="tarjeta-acceso">
     <div class="marca">
-      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M15.8 15.4A8 8 0 0 1 8.6 4.1a8.4 8.4 0 1 0 7.2 11.3z"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" fill="currentColor"/><path d="M9 6.6V15a2.7 2.7 0 0 0 2.7 2.7H17" stroke="#0B0E17" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       LunaticoIA
     </div>
     <p class="lema">Conversa con IA. Compras créditos cuando los necesitas — sin suscripción ni cobros automáticos.</p>
@@ -906,7 +906,7 @@
 <div id="app" class="oculto">
   <header class="barra">
     <div class="marca">
-      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M15.8 15.4A8 8 0 0 1 8.6 4.1a8.4 8.4 0 1 0 7.2 11.3z"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" fill="currentColor"/><path d="M9 6.6V15a2.7 2.7 0 0 0 2.7 2.7H17" stroke="#0B0E17" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       LunaticoIA
     </div>
     <div class="empuje"></div>
