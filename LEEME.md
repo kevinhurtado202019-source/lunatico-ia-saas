@@ -115,6 +115,28 @@ respuesta final), `/api/chat` los junta todos — quedarse solo con el primero
 (como hacía antes) cortaría la respuesta a la mitad. `MAX_TOKENS_RESPUESTA`
 también subió de 1.024 a 4.096 por la misma razón.
 
+### Imágenes adjuntas
+
+`/api/chat` acepta un campo opcional `imagen: {mediaType, datos}` (JPEG, PNG,
+GIF o WEBP en base64, hasta 10MB — los límites reales de la API de Claude).
+Va directo en el mensaje como bloque `image` **antes** del texto (mejor
+resultado, según la propia guía de Anthropic), sin pasar por la Files API: es
+más simple y no hay archivos que limpiar después. El límite del body de
+Express subió de 1mb a 15mb solo por esto.
+
+El costo de una imagen ya lo cubre la fórmula normal de créditos: Claude la
+factura como tokens de entrada, así que no hace falta ningún cargo aparte
+(a diferencia de `web_search`, que sí tiene un costo propio fuera de los
+tokens).
+
+**La imagen no queda en el historial.** En la colección `messages` se guarda
+solo el texto (con un `[imagen adjunta] ` de prefijo si hubo una), nunca el
+base64 — guardar fotos para siempre en la base no tenía sentido. Como
+consecuencia, en un turno posterior Claude ya no "ve" la imagen: solo lo que
+se haya dicho sobre ella en su momento. Si en algún momento hace falta que
+recuerde imágenes entre turnos, tocaría subirlas a la Files API de Anthropic
+y guardar el `file_id` en vez de descartarlas.
+
 ---
 
 ## Endpoints

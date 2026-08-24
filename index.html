@@ -533,6 +533,12 @@
   .turno.ia .texto { font-size: 16.5px; line-height: 1.72; max-width: 34em; }
   .turno.ia .quien { color: var(--luna-viva); }
 
+  .imagen-mensaje {
+    display: block; max-width: 100%; max-height: 260px; border-radius: 10px;
+    margin-bottom: 8px;
+  }
+  .turno.yo .texto:has(.imagen-mensaje:only-child) { padding: 6px; }
+
   .turno .cuando { font-size: 11.5px; color: var(--tenue); margin-top: 7px; }
   .turno.yo .cuando { text-align: right; }
 
@@ -658,6 +664,26 @@
   .enviar:hover { filter: brightness(1.08); }
   .enviar:disabled { opacity: .32; cursor: not-allowed; filter: none; }
   .enviar svg { width: 17px; height: 17px; }
+
+  .controles .adjuntar { width: 36px; height: 36px; flex: none; }
+
+  .adjunto {
+    display: flex; align-items: center; gap: 9px;
+    background: var(--superficie); border: 1px solid var(--borde);
+    border-radius: 12px; padding: 7px 10px; margin-bottom: 8px;
+  }
+  .adjunto img {
+    width: 34px; height: 34px; border-radius: 7px; object-fit: cover; flex: none;
+  }
+  .adjunto-nombre {
+    flex: 1; min-width: 0; font-size: 13px; color: var(--suave);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .adjunto-quitar {
+    flex: none; width: 26px; height: 26px; border-radius: 8px;
+    display: grid; place-items: center; color: var(--tenue); font-size: 13px;
+  }
+  .adjunto-quitar:hover { background: var(--alta); color: var(--texto); }
 
   .nota-pie {
     text-align: center; font-size: 12px; color: var(--tenue);
@@ -1013,9 +1039,20 @@
 
   <div class="pie">
     <div class="redactor">
+      <div class="adjunto oculto" id="cajaAdjunto">
+        <img id="adjuntoPreview" alt="">
+        <span class="adjunto-nombre" id="adjuntoNombre"></span>
+        <button type="button" class="adjunto-quitar" onclick="quitarAdjunto()" aria-label="Quitar imagen" title="Quitar imagen">✕</button>
+      </div>
       <div class="caja">
         <textarea id="entrada" rows="1" aria-label="Escribe tu mensaje" placeholder="Escribe tu mensaje…" oninput="ajustarAlto()" onkeydown="teclas(event)"></textarea>
         <div class="controles">
+          <button class="icono adjuntar" type="button" onclick="document.getElementById('archivoImagen').click()" aria-label="Adjuntar imagen" title="Adjuntar imagen">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.4 11.1 12.7 19.8a4.5 4.5 0 0 1-6.4-6.4l8.7-8.7a3 3 0 0 1 4.2 4.2L10.5 17.7a1.5 1.5 0 0 1-2.1-2.1l7.1-7.1"/>
+            </svg>
+          </button>
+          <input type="file" id="archivoImagen" accept="image/jpeg,image/png,image/gif,image/webp" class="oculto" onchange="elegirImagen(event)">
           <select class="modo" id="modo" aria-label="Modo de respuesta" title="Modelo a usar"></select>
           <button class="enviar" id="btnEnviar" onclick="enviar()" aria-label="Enviar mensaje">
             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1273,6 +1310,8 @@
   var hayMensajes = false;
   var tokenReset = null;
   var saldoMostrado = null;
+  var adjuntoActual = null; // { mediaType, datos, nombre, previewUrl }
+  var MAX_IMAGEN_BYTES = 10 * 1024 * 1024;
   var reducirMovimiento = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // Un intercambio típico ronda los 3,6 créditos en modo Rápido.
@@ -1634,11 +1673,53 @@
     var t = $('entrada');
     t.style.height = 'auto';
     t.style.height = Math.min(t.scrollHeight, 190) + 'px';
-    $('btnEnviar').disabled = enviando || !t.value.trim();
+    $('btnEnviar').disabled = enviando || (!t.value.trim() && !adjuntoActual);
   };
 
   window.teclas = function (e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviar(); }
+  };
+
+  // Adjuntar una imagen: capturas, disenos, mockups del proyecto de quien
+  // pregunta. Se guarda en base64 en memoria hasta que se manda el mensaje;
+  // nunca se sube a ningun lado por separado.
+  window.elegirImagen = function (e) {
+    var archivo = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!archivo) return;
+
+    var tiposValidos = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (tiposValidos.indexOf(archivo.type) === -1) {
+      avisoPie('Solo se aceptan imágenes JPEG, PNG, GIF o WEBP.');
+      return;
+    }
+    if (archivo.size > MAX_IMAGEN_BYTES) {
+      avisoPie('La imagen pesa demasiado (máximo 10 MB).');
+      return;
+    }
+
+    var lector = new FileReader();
+    lector.onload = function () {
+      var resultado = String(lector.result || '');
+      var datos = resultado.slice(resultado.indexOf(',') + 1);
+      adjuntoActual = { mediaType: archivo.type, datos: datos, nombre: archivo.name, previewUrl: resultado };
+      $('adjuntoPreview').src = resultado;
+      $('adjuntoNombre').textContent = archivo.name;
+      $('cajaAdjunto').classList.remove('oculto');
+      avisoPie('');
+      ajustarAlto();
+    };
+    lector.onerror = function () {
+      avisoPie('No se pudo leer la imagen. Inténtalo de nuevo.');
+    };
+    lector.readAsDataURL(archivo);
+  };
+
+  window.quitarAdjunto = function () {
+    adjuntoActual = null;
+    $('cajaAdjunto').classList.add('oculto');
+    $('adjuntoPreview').src = '';
+    ajustarAlto();
   };
 
   // Markdown minimo (parrafos, **negrita**, *cursiva*, `codigo`, ```bloques```,
@@ -1764,24 +1845,37 @@
     if (enviando) return;
     var t = $('entrada');
     var mensaje = t.value.trim();
-    if (!mensaje) return;
+    var adjunto = adjuntoActual;
+    if (!mensaje && !adjunto) return;
 
     enviando = true;
-    t.value = ''; ajustarAlto();
+    t.value = ''; quitarAdjunto();
     avisoPie('');
     if ($('logoRespondiendo')) $('logoRespondiendo').classList.add('respondiendo');
 
     var mio = turno('yo', 'Tú', mensaje);
+    if (adjunto) {
+      var imagenMio = document.createElement('img');
+      imagenMio.src = adjunto.previewUrl;
+      imagenMio.alt = adjunto.nombre;
+      imagenMio.className = 'imagen-mensaje';
+      mio.texto.insertBefore(imagenMio, mio.texto.firstChild);
+    }
     var esperando = turno('ia', 'LunaticoIA', null);
     esperando.texto.innerHTML = '<span class="pensando">' + clonarLogo('logo-pensando') + 'Pensando</span>';
 
-    // Si el fetch revienta, la peticion nunca salio: devolvemos el texto al
-    // campo y quitamos los turnos, para que reintentar sea pulsar Enter.
+    // Si el fetch revienta, la peticion nunca salio: devolvemos el texto (y
+    // la imagen) al campo y quitamos los turnos, para que reintentar sea
+    // pulsar Enter.
     var falloDeRed = false;
 
     api('/api/chat', {
       method: 'POST',
-      body: JSON.stringify({ message: mensaje, modelo: $('modo').value || undefined })
+      body: JSON.stringify({
+        message: mensaje,
+        modelo: $('modo').value || undefined,
+        imagen: adjunto ? { mediaType: adjunto.mediaType, datos: adjunto.datos } : undefined
+      })
     }).then(function (r) {
       if (r.res.status === 402) {
         esperando.texto.textContent = 'Te quedaste sin créditos. Compra un paquete para seguir conversando.';
@@ -1823,6 +1917,12 @@
       esperando.caja.remove();
       if (!hayMensajes || !$('lienzo').querySelector('.turno')) reponerBienvenida();
       t.value = mensaje;
+      if (adjunto) {
+        adjuntoActual = adjunto;
+        $('adjuntoPreview').src = adjunto.previewUrl;
+        $('adjuntoNombre').textContent = adjunto.nombre;
+        $('cajaAdjunto').classList.remove('oculto');
+      }
       avisoPie('No se pudo enviar. Revisa tu conexión y vuelve a intentarlo.');
     }).then(function () {
       enviando = false;

@@ -25,7 +25,10 @@ const app = express();
 app.set('trust proxy', 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
-app.use(express.json({ limit: '1mb' }));
+// 15mb porque /api/chat acepta una imagen adjunta en base64 (hasta 10mb
+// codificada, el limite de la API de Claude); el resto de las rutas mandan
+// cuerpos chiquitos, asi que este limite mas alto no les cambia nada.
+app.use(express.json({ limit: '15mb' }));
 
 let db;
 const client = new MongoClient(process.env.MONGODB_URI);
@@ -64,6 +67,13 @@ const HERRAMIENTAS_IA = [
 // de horas de Anthropic, muy por encima de lo que un chat como este va a
 // usar, y web_fetch no cobra nada aparte de los tokens que consume.
 const CREDITOS_POR_BUSQUEDA = 10;
+
+// Imagenes adjuntas al chat (para que el usuario muestre capturas, disenos o
+// mockups de su proyecto). Van directo en el mensaje como bloque "image", sin
+// pasar por la Files API: mas simple, y no hay que limpiar archivos despues.
+// Limites de la API de Claude: 10MB en base64, JPEG/PNG/GIF/WEBP.
+const TIPOS_IMAGEN_PERMITIDOS = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const MAX_BASE64_IMAGEN = 14 * 1024 * 1024; // ~10MB reales, con margen del inflado de base64
 
 // Multiplicadores = precio de entrada de cada modelo dividido entre el de
 // Rápido (Haiku, $1/MTok): Sonnet $2, Opus $5, Fable $10 -> 1 : 2(*) : 5 : 10.
@@ -625,10 +635,25 @@ app.post('/api/resetear-password', recuperarLimiter, async (req, res) => {
 
 app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
     try {
-        const { message } = req.body;
+        const { message, imagen } = req.body;
         const claveModelo = req.body.modelo || MODELO_POR_DEFECTO;
+        const mensajeTexto = typeof message === 'string' ? message.trim() : '';
 
-        if (!message || typeof message !== 'string' || message.trim() === '') {
+        let imagenValida = null;
+        if (imagen != null) {
+            if (
+                typeof imagen !== 'object' ||
+                !TIPOS_IMAGEN_PERMITIDOS.includes(imagen.mediaType) ||
+                typeof imagen.datos !== 'string' ||
+                !imagen.datos ||
+                imagen.datos.length > MAX_BASE64_IMAGEN
+            ) {
+                return res.status(400).json({ error: 'Imagen no válida' });
+            }
+            imagenValida = { mediaType: imagen.mediaType, datos: imagen.datos };
+        }
+
+        if (!mensajeTexto && !imagenValida) {
             return res.status(400).json({ error: 'Message cannot be empty' });
         }
         if (!MODELOS[claveModelo]) {
@@ -677,7 +702,18 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             messagesForClaude.shift();
         }
 
-        messagesForClaude.push({ role: 'user', content: message.trim() });
+        // La imagen va antes del texto (asi rinde mejor, segun la propia
+        // guia de Anthropic) y como bloques, no como string; sin imagen se
+        // manda el texto solo, igual que antes.
+        messagesForClaude.push({
+            role: 'user',
+            content: imagenValida
+                ? [
+                      { type: 'image', source: { type: 'base64', media_type: imagenValida.mediaType, data: imagenValida.datos } },
+                      { type: 'text', text: mensajeTexto || 'Mira esta imagen.' }
+                  ]
+                : mensajeTexto
+        });
 
         const response = await claudeClient.messages.create({
             model: modelo.id,
@@ -705,9 +741,16 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         const cobro = creditosDe(response.usage, modelo.multiplicador);
         const nuevoSaldo = ilimitado ? user.creditBalance : Math.max(0, user.creditBalance - cobro);
 
+        // El historial guarda solo texto, nunca la imagen: no tiene sentido
+        // acumular fotos en la base para siempre, y evita que cada turno
+        // futuro tenga que volver a mandarle a Claude las imagenes viejas.
+        // Consecuencia: en un turno posterior Claude ya no "ve" la imagen,
+        // solo lo que se haya dicho sobre ella.
         const guardadoEn = new Date();
         await messages.insertOne({
-            userId, role: 'user', content: message.trim(), createdAt: guardadoEn
+            userId, role: 'user',
+            content: (imagenValida ? '[imagen adjunta] ' : '') + mensajeTexto,
+            createdAt: guardadoEn
         });
         await messages.insertOne({
             userId, role: 'assistant', content: aiMessage,
