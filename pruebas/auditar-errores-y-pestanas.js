@@ -3,16 +3,9 @@ const entorno = require('./entorno');
 const fake = require('./fake-mongo');
 require.cache[require.resolve('mongodb')] = { id:'m',filename:'m',loaded:true,exports:fake,paths:[] };
 let romper = false;
-function A(){ this.messages={ stream: p => {
-  var listeners = {};
-  return {
-    on: function (ev, cb) { listeners[ev] = cb; return this; },
-    finalMessage: async function () {
-      if (romper) { const e = new Error('401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"},"request_id":"req_011SECRETO"}'); throw e; }
-      if (listeners.text) listeners.text('Respuesta de prueba.', 'Respuesta de prueba.');
-      return { content:[{type:'text',text:'Respuesta de prueba.'}], usage:{input_tokens:1600,output_tokens:400}, model:p.model, stop_reason:'end_turn' };
-    }
-  };
+function A(){ this.messages={ create: async p => {
+  if (romper) { const e = new Error('401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"},"request_id":"req_011SECRETO"}'); throw e; }
+  return { content:[{type:'text',text:'Respuesta de prueba.'}], usage:{input_tokens:1600,output_tokens:400}, model:p.model };
 } }; }
 A.default=A;
 require.cache[require.resolve('@anthropic-ai/sdk')] = { id:'a',filename:'a',loaded:true,exports:A,paths:[] };

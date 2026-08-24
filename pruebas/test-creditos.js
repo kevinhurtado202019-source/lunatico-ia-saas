@@ -29,17 +29,6 @@ function req(method, p, body, headers) {
             let buf = '';
             res.on('data', (c) => (buf += c));
             res.on('end', () => {
-                // /api/chat que SI llega a llamar a Claude responde como
-                // Server-Sent Events (text/event-stream), no JSON normal: se
-                // parsean los eventos "data: {...}" a una lista de objetos.
-                if (String(res.headers['content-type'] || '').indexOf('text/event-stream') !== -1) {
-                    const eventos = buf.split('\n\n').map((bloque) => {
-                        const linea = bloque.split('\n').find((l) => l.indexOf('data: ') === 0);
-                        if (!linea) return null;
-                        try { return JSON.parse(linea.slice(6)); } catch (e) { return null; }
-                    }).filter(Boolean);
-                    return resolve({ status: res.statusCode, body: eventos, sse: true });
-                }
                 let parsed; try { parsed = JSON.parse(buf); } catch (e) { parsed = buf.slice(0, 200); }
                 resolve({ status: res.statusCode, body: parsed });
             });
@@ -189,19 +178,13 @@ function eventoWompi(referencia, status, monto, secreto) {
     check('Modelo inexistente se rechaza con 400', modMalo.status === 400);
 
     // --- Fallo de la API no cobra ---
-    // Con la respuesta en Server-Sent Events, el codigo 200 ya salio ANTES de
-    // saber si Claude va a responder bien (no se puede "cambiar de opinion"
-    // sobre el codigo HTTP a mitad de un stream) -- por eso un fallo de la
-    // API ya no se ve como un 500, sino como un evento {tipo:'error'} dentro
-    // del stream. Lo que importa sigue siendo lo mismo: que no se cobre nada.
     const antes = (await req('GET', '/api/stats', null, { Authorization: 'Bearer ' + tok })).body.creditBalance;
     const chatFalla = await req('POST', '/api/chat', { message: 'hola' },
         { Authorization: 'Bearer ' + tok });
     const despues = (await req('GET', '/api/stats', null, { Authorization: 'Bearer ' + tok })).body.creditBalance;
-    const eventoError = chatFalla.sse && chatFalla.body.some((e) => e.tipo === 'error');
     check('Si la API de Claude falla, NO se descuenta saldo',
-        chatFalla.status === 200 && eventoError && antes === despues,
-        `HTTP ${chatFalla.status}, sse=${chatFalla.sse}, saldo ${antes} -> ${despues}`);
+        chatFalla.status === 500 && antes === despues,
+        `HTTP ${chatFalla.status}, saldo ${antes} -> ${despues}`);
 
     // --- Seguridad heredada ---
     check('Sin token devuelve 401', (await req('GET', '/api/stats')).status === 401);

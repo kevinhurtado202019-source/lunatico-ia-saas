@@ -2,16 +2,8 @@ const { chromium } = require('playwright');
 const entorno = require('./entorno');
 const fake = require('./fake-mongo');
 require.cache[require.resolve('mongodb')] = { id:'m', filename:'m', loaded:true, exports:fake, paths:[] };
-function A(){ this.messages={ stream: p => {
-  var listeners = {};
-  return {
-    on: function (ev, cb) { listeners[ev] = cb; return this; },
-    finalMessage: async function () {
-      if (listeners.text) listeners.text('Respuesta de prueba.', 'Respuesta de prueba.');
-      return { content:[{type:'text',text:'Respuesta de prueba.'}], usage:{input_tokens:1600,output_tokens:400}, model:p.model, stop_reason:'end_turn' };
-    }
-  };
-} }; }
+function A(){ this.messages={ create: async p => ({
+  content:[{type:'text',text:'Respuesta de prueba.'}], usage:{input_tokens:1600,output_tokens:400}, model:p.model }) }; }
 A.default=A;
 require.cache[require.resolve('@anthropic-ai/sdk')] = { id:'a', filename:'a', loaded:true, exports:A, paths:[] };
 const PORT=4911;

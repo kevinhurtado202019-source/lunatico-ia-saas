@@ -173,14 +173,6 @@ const PAQUETES = {
 // API de Anthropic con su request_id dentro del chat.
 function fallo(res, codigo, publico, error, contexto) {
     console.error('✗ ' + contexto + ':', (error && error.message) || error);
-    // /api/chat manda la respuesta como Server-Sent Events: si el fallo pasa
-    // DESPUES de que los headers ya salieron como "200 text/event-stream", ya
-    // no se puede cambiar el codigo de estado -- el error se manda como un
-    // evento mas dentro del stream, y el cliente lo interpreta igual.
-    if (res.headersSent) {
-        try { res.write('data: ' + JSON.stringify({ tipo: 'error', mensaje: publico }) + '\n\n'); } catch (e) {}
-        return res.end();
-    }
     res.status(codigo).json({ error: publico });
 }
 
@@ -843,43 +835,25 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         }
         messagesForClaude.push({ role: 'user', content: contenidoUsuario });
 
-        // A partir de aqui la respuesta va como Server-Sent Events: el texto
-        // llega en pedazos a medida que Claude lo genera (en vez de esperar
-        // a que termine toda la respuesta) y el frontend lo va mostrando.
-        // Los 400/402/403/404 de arriba pasan ANTES de este punto porque
-        // hasta aca no sabemos todavia si la llamada a Claude va a andar --
-        // una vez que se manda el codigo 200 ya no se puede cambiar, asi que
-        // cualquier error posterior (incluido que la API falle) se manda
-        // como un evento mas dentro del stream, nunca como otro codigo HTTP.
-        res.writeHead(200, {
-            'Content-Type': 'text/event-stream; charset=utf-8',
-            'Cache-Control': 'no-cache, no-transform',
-            Connection: 'keep-alive',
-            'X-Accel-Buffering': 'no'
-        });
-        function evento(obj) {
-            res.write('data: ' + JSON.stringify(obj) + '\n\n');
-        }
-
-        let aiMessage = '';
-        const stream = claudeClient.messages.stream({
+        const response = await claudeClient.messages.create({
             model: modelo.id,
             max_tokens: MAX_TOKENS_RESPUESTA,
             system: construirSystemPrompt(user),
             messages: messagesForClaude,
             tools: HERRAMIENTAS_IA
         });
-        // El evento 'text' trae el pedacito nuevo de texto (no el acumulado),
-        // en el mismo orden en que Claude lo va generando -- juntarlos en
-        // orden reconstruye la respuesta completa, igual que antes se hacia
-        // uniendo los bloques de texto de la respuesta ya terminada.
-        stream.on('text', (delta) => {
-            aiMessage += delta;
-            evento({ tipo: 'delta', texto: delta });
-        });
 
-        const response = await stream.finalMessage();
-
+        // Con herramientas de por medio la respuesta trae varios bloques de
+        // texto intercalados con los de busqueda/lectura/codigo (p.ej. "voy a
+        // buscar..." + resultados + la respuesta final): hay que juntarlos
+        // todos, no solo quedarse con el primero.
+        let aiMessage = '';
+        if (response.content && Array.isArray(response.content)) {
+            aiMessage = response.content
+                .filter((i) => i.type === 'text')
+                .map((i) => i.text)
+                .join('');
+        }
         if (!aiMessage) throw new Error('Invalid response from Claude API');
 
         // Si la respuesta se corto (llego al limite de tokens, o Anthropic la
@@ -888,13 +862,11 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         // paso -- como si la IA se hubiera quedado pegada. Se avisa explicito.
         const cortada = response.stop_reason === 'max_tokens' || response.stop_reason === 'pause_turn';
         if (cortada) {
-            const avisoCorte = (aiMessage ? '\n\n' : '') + '⚠️ *La respuesta se cortó antes de terminar' +
+            aiMessage += (aiMessage ? '\n\n' : '') + '⚠️ *La respuesta se cortó antes de terminar' +
                 (response.stop_reason === 'max_tokens'
                     ? ' (llegó al límite de longitud)'
                     : ' (una búsqueda o ejecución de código larga quedó a medias)') +
                 '. Escribe "continúa" para que siga.*';
-            aiMessage += avisoCorte;
-            evento({ tipo: 'delta', texto: avisoCorte });
         }
 
         // Se cobra DESPUÉS de una respuesta correcta: si la API falla, el
@@ -923,8 +895,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         }
 
         const uso = response.usage || {};
-        evento({
-            tipo: 'fin',
+        res.json({
             response: aiMessage,
             consumo: {
                 modelo: modelo.etiqueta,
@@ -938,7 +909,6 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
                 cortada: cortada
             }
         });
-        res.end();
     } catch (error) {
         fallo(res, 500, 'No pudimos generar la respuesta. No se te descontó ningún crédito.', error, 'chat');
     }

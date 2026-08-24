@@ -205,46 +205,42 @@ idioma, qué tan detallada quiere la respuesta, etc.) vía
 las reglas de seguridad de arriba (lo del sandbox de `code_execution`) siempre
 se respetan aunque alguien intente escribir instrucciones que las contradigan.
 
-### `/api/chat` responde en streaming (Server-Sent Events)
+### Streaming: se probó y se revirtió (25 de agosto de 2026)
 
-Antes se esperaba a que Claude terminara toda la respuesta y se mandaba de
-un solo golpe con `res.json(...)`. Ahora `/api/chat` usa
-`claudeClient.messages.stream(...)` (en vez de `.create(...)`) y responde con
-`Content-Type: text/event-stream`: el texto llega en pedazos, en el orden en
-que Claude lo va generando, y el frontend lo va mostrando a medida que llega
-en vez de mostrar el indicador de "Pensando" hasta que todo esté listo.
+Se implementó `/api/chat` con `claudeClient.messages.stream(...)` en vez de
+`.create(...)`, respondiendo con Server-Sent Events para que el texto
+apareciera en pedazos. Pasó **todas** las pruebas automatizadas (con dobles
+del SDK) y hasta una prueba real contra la API de Claude con una clave
+inválida (confirmando que un fallo real no cobra créditos). Se desplegó a
+producción.
 
-Cada pedazo es una línea `data: {...}\n\n` con un campo `tipo`:
+**En producción, cada mensaje fallaba de inmediato** con "No pudimos generar
+la respuesta" — incluso un simple "hola". Como las pruebas automatizadas
+(que usan un doble del SDK, no la API real) habían pasado todas, el problema
+tenía que estar en algo que solo pasa con la llamada real a Claude en el
+entorno de Railway — posiblemente el SDK de Anthropic instalado
+(`@anthropic-ai/sdk@0.20.9`, de mediados de 2024) usando algo en su
+implementación de `.stream()` que no es totalmente compatible con la versión
+de Node que corre en Railway, o con el formato real de eventos que manda hoy
+la API para los bloques de herramientas nuevos. No se pudo confirmar la causa
+exacta porque no había acceso a los logs de Railway en el momento del fallo.
 
-- `{tipo:'delta', texto:'...'}` — un pedazo nuevo de texto.
-- `{tipo:'fin', response:'...', consumo:{...}}` — la respuesta completa y el
-  mismo objeto `consumo` que antes iba en el único `res.json(...)`.
-- `{tipo:'error', mensaje:'...'}` — algo falló (ver el punto siguiente).
+Se revirtió `/api/chat` a `claudeClient.messages.create(...)` con
+`res.json(...)` normal (como estaba antes) para restaurar el servicio de
+inmediato. Las otras seis capacidades de este mismo lote (instrucciones
+personalizadas, memoria más larga, adjuntar PDF/texto, imágenes que se
+recuerdan entre turnos, botón de descargar código, voz) **no se tocaron** —
+no tenían nada que ver con el problema.
 
-**Consecuencia importante: el código HTTP 200 sale ANTES de saber si Claude
-va a responder bien.** Con streaming no hay forma de "esperar a ver si
-funciona" antes de comprometerse a un código de estado — en el momento en
-que empieza a salir el primer byte, el código ya tiene que estar decidido.
-Por eso:
-
-- Los rechazos que se detectan ANTES de llamar a Claude (sin créditos → 402,
-  modelo inválido → 400, correo sin verificar → 403, etc.) siguen siendo
-  códigos HTTP normales con JSON, exactamente como antes — nada cambió ahí.
-- Pero si Claude falla DESPUÉS de haber empezado el stream (API caída, clave
-  inválida, lo que sea), la respuesta ya salió como `200 text/event-stream`
-  y el error se manda como un evento `{tipo:'error'}` dentro del stream, no
-  como un código 500. `fallo()` en `server-saas.js` revisa `res.headersSent`
-  para saber cuál de las dos formas usar.
-- **Esto rompió una prueba existente** (`pruebas/test-creditos.js`, "Si la
-  API de Claude falla, NO se descuenta saldo"): antes esperaba `HTTP 500`,
-  ahora espera `HTTP 200` con un evento `{tipo:'error'}` en el cuerpo. Si se
-  toca esa prueba de nuevo, ojo con esto — no es un bug, es como tiene que
-  comportarse un stream de verdad.
-
-El resto del flujo (cobrar créditos, guardar en el historial, detectar
-`stop_reason` cortado) sigue pasando exactamente en el mismo punto que
-antes, solo que ahora es el último evento (`fin`) el que lo carga en vez de
-la única respuesta JSON.
+**Si se vuelve a intentar streaming:** antes de desplegar, conseguir acceso a
+los logs de Railway (o pedirle al dueño que los revise) para ver el error
+exacto de `.stream()` en cuanto falle una sola vez, en vez de asumir que
+"pasa las pruebas locales" es suficiente — este caso demostró que no lo es,
+porque los dobles del SDK no pueden reproducir un desajuste de verdad entre
+la versión instalada del SDK y el entorno real de producción. También
+conviene probar primero actualizar `@anthropic-ai/sdk` a una versión
+reciente, ya que la instalada es bastante vieja para las funciones que ya
+usa este proyecto (herramientas, modelos nuevos).
 
 ### Botón de descargar código
 
@@ -394,8 +390,9 @@ va a pagar.
 cuenta y recuperación de contraseña) está activo en producción desde el
 24 de agosto de 2026, usando la API HTTP de Resend.
 
-~~6. Streaming de respuestas~~ — hecho: `/api/chat` responde en Server-Sent
-Events, ver "`/api/chat` responde en streaming" más arriba.
+**Streaming de respuestas** se intentó y se revirtió por romper producción —
+ver "Streaming: se probó y se revirtió" más arriba antes de volver a
+intentarlo.
 
 Y sin prisa: respaldos de la base, alojar las tipografías en el servidor, subir
 de Node 14 a Node 20, e historial de conversaciones.

@@ -3,16 +3,9 @@ const entorno = require('./entorno');
 const fake = require('./fake-mongo');
 require.cache[require.resolve('mongodb')] = { id:'m',filename:'m',loaded:true,exports:fake,paths:[] };
 let lentitud = 0;
-function A(){ this.messages={ stream: p => {
-  var listeners = {};
-  return {
-    on: function (ev, cb) { listeners[ev] = cb; return this; },
-    finalMessage: async function () {
-      if (lentitud) await new Promise(r=>setTimeout(r,lentitud));
-      if (listeners.text) listeners.text('Respuesta de prueba.', 'Respuesta de prueba.');
-      return { content:[{type:'text',text:'Respuesta de prueba.'}], usage:{input_tokens:1600,output_tokens:400}, model:p.model, stop_reason:'end_turn' };
-    }
-  };
+function A(){ this.messages={ create: async p => {
+  if (lentitud) await new Promise(r=>setTimeout(r,lentitud));
+  return { content:[{type:'text',text:'Respuesta de prueba.'}], usage:{input_tokens:1600,output_tokens:400}, model:p.model };
 } }; }
 A.default=A;
 require.cache[require.resolve('@anthropic-ai/sdk')] = { id:'a',filename:'a',loaded:true,exports:A,paths:[] };

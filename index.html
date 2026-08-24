@@ -2144,12 +2144,8 @@
     // pulsar Enter.
     var falloDeRed = false;
 
-    var headersChat = { 'Content-Type': 'application/json' };
-    if (token) headersChat['Authorization'] = 'Bearer ' + token;
-
-    fetch('/api/chat', {
+    api('/api/chat', {
       method: 'POST',
-      headers: headersChat,
       body: JSON.stringify({
         message: mensaje,
         modelo: $('modo').value || undefined,
@@ -2157,95 +2153,42 @@
         documento: adjunto && adjunto.tipo === 'documento' ? { mediaType: adjunto.mediaType, datos: adjunto.datos, nombre: adjunto.nombre } : undefined,
         archivoTexto: adjunto && adjunto.tipo === 'texto' ? { contenido: adjunto.contenido, nombre: adjunto.nombre } : undefined
       })
-    }).then(function (res) {
-      if (res.status === 402) {
+    }).then(function (r) {
+      if (r.res.status === 402) {
         esperando.texto.textContent = 'Te quedaste sin créditos. Compra un paquete para seguir conversando.';
         if (yo) { yo.creditBalance = 0; pintarSaldo(); }
         abrirPanel('paquetes');
         return;
       }
-      // Hasta aca el servidor todavia puede rechazar la peticion entera con
-      // un codigo de error normal (400/401/403/404/500): la respuesta en
-      // stream (200) recien empieza mas abajo.
-      if (!res.ok) {
-        return res.json().catch(function () { return null; }).then(function (data) {
-          esperando.texto.textContent =
-            (data && data.error) || 'No pudimos generar la respuesta. Inténtalo de nuevo.';
-        });
+      // El servidor respondio, aunque sea con error: la peticion SI llego, asi
+      // que el aviso se queda en el hilo en vez de tratarse como fallo de red.
+      if (!r.res.ok) {
+        esperando.texto.textContent =
+          (r.data && r.data.error) || 'No pudimos generar la respuesta. Inténtalo de nuevo.';
+        return;
       }
 
-      // Respuesta en Server-Sent Events: el texto llega en pedazos. Se
-      // muestra tal cual (texto plano) mientras llega, y solo al final se
-      // aplica el formato completo (markdown, emoji, botones de codigo).
-      var lector = res.body.getReader();
-      var decodificador = new TextDecoder();
-      var restante = '';
-      var textoAcumulado = '';
-      var consumoFinal = null;
-      var mensajeError = null;
-      var primerPedazo = true;
+      esperando.texto.innerHTML = renderizarMarkdown(r.data.response);
+      pintarEmoji(esperando.texto);
+      agregarBotonEscuchar(esperando.caja, esperando.texto);
 
-      function procesarLinea(bloque) {
-        var lineas = bloque.split('\n');
-        var datos = null;
-        for (var i = 0; i < lineas.length; i++) {
-          if (lineas[i].indexOf('data: ') === 0) { datos = lineas[i].slice(6); break; }
-        }
-        if (!datos) return;
-        var payload;
-        try { payload = JSON.parse(datos); } catch (e) { return; }
-        if (payload.tipo === 'delta') {
-          if (primerPedazo) { esperando.texto.textContent = ''; primerPedazo = false; }
-          textoAcumulado += payload.texto;
-          esperando.texto.textContent = textoAcumulado;
-          abajo();
-        } else if (payload.tipo === 'fin') {
-          consumoFinal = payload.consumo;
-          if (payload.response) textoAcumulado = payload.response;
-        } else if (payload.tipo === 'error') {
-          mensajeError = payload.mensaje;
+      var c = r.data.consumo;
+      if (c) {
+        var linea = document.createElement('div');
+        linea.className = 'consumo';
+        var texto = c.creditosCobrados + ' créditos · ' + c.modelo +
+          ' · ' + c.tokensEntrada + ' entrada / ' + c.tokensSalida + ' salida';
+        if (c.busquedas) texto += ' · ' + c.busquedas + ' búsqueda' + (c.busquedas > 1 ? 's' : '') + ' web';
+        if (c.lecturasWeb) texto += ' · ' + c.lecturasWeb + ' página' + (c.lecturasWeb > 1 ? 's' : '') + ' leída' + (c.lecturasWeb > 1 ? 's' : '');
+        linea.textContent = texto;
+        esperando.caja.appendChild(linea);
+        if (yo) {
+          yo.creditBalance = c.creditBalance;
+          if (c.creditosIlimitados) yo.creditosIlimitados = true;
+          pintarSaldo();
         }
       }
-
-      function leer() {
-        return lector.read().then(function (resultado) {
-          if (resultado.done) return;
-          restante += decodificador.decode(resultado.value, { stream: true });
-          var bloques = restante.split('\n\n');
-          restante = bloques.pop();
-          bloques.forEach(procesarLinea);
-          return leer();
-        });
-      }
-
-      return leer().then(function () {
-        if (mensajeError) {
-          esperando.texto.textContent = mensajeError;
-          return;
-        }
-
-        esperando.texto.innerHTML = renderizarMarkdown(textoAcumulado);
-        pintarEmoji(esperando.texto);
-        agregarBotonEscuchar(esperando.caja, esperando.texto);
-
-        var c = consumoFinal;
-        if (c) {
-          var linea = document.createElement('div');
-          linea.className = 'consumo';
-          var texto = c.creditosCobrados + ' créditos · ' + c.modelo +
-            ' · ' + c.tokensEntrada + ' entrada / ' + c.tokensSalida + ' salida';
-          if (c.busquedas) texto += ' · ' + c.busquedas + ' búsqueda' + (c.busquedas > 1 ? 's' : '') + ' web';
-          if (c.lecturasWeb) texto += ' · ' + c.lecturasWeb + ' página' + (c.lecturasWeb > 1 ? 's' : '') + ' leída' + (c.lecturasWeb > 1 ? 's' : '');
-          linea.textContent = texto;
-          esperando.caja.appendChild(linea);
-          if (yo) {
-            yo.creditBalance = c.creditBalance;
-            if (c.creditosIlimitados) yo.creditosIlimitados = true;
-            pintarSaldo();
-          }
-        }
-        abajo();
-      });
+      abajo();
     }).catch(function (err) {
       falloDeRed = true;
       mio.caja.remove();
