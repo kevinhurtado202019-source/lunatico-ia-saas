@@ -191,7 +191,7 @@ va a pagar.
 1. Que Wompi cambie el nombre del comercio a **LunaticoIA** (quedó
    «interrapidisimo» por error).
 2. Averiguar por qué rechazaron la cuenta bancaria de payouts. Puede ser el
-   mismo problema: la cuenta está a nombre de Kevin Gonzalez.
+   mismo problema que el del nombre del comercio.
 3. Poner las tres llaves de Wompi y configurar el webhook.
 4. Un pago de prueba de punta a punta.
 5. Poner las variables `SMTP_*` en Railway (ver arriba) para activar la

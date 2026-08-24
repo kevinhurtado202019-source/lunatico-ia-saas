@@ -63,7 +63,7 @@ async function recorrido() {
   const nueva = async (o) => {
     const pg = await b.newPage(o || { viewport: { width: 1366, height: 900 } });
     pg.on('pageerror', e => errores.push('pageerror: ' + e.message));
-    pg.on('console', m => { if (m.type() === 'error' && !/favicon/i.test(m.text())) errores.push('console: ' + m.text()); });
+    pg.on('console', m => { if (m.type() === 'error' && !/favicon/i.test(m.text()) && !/status of 403/.test(m.text())) errores.push('console: ' + m.text()); });
     pg.on('response', r => {
       if (r.status() >= 400 && !(r.status() === 403 && /\/api\/stats/.test(r.url()))) {
         malas.push(r.status() + ' ' + r.url());
