@@ -525,11 +525,39 @@
   .turno.ia .texto { font-size: 16.5px; line-height: 1.72; max-width: 34em; }
   .turno.ia .quien { color: var(--luna-viva); }
 
+  .turno .cuando { font-size: 11.5px; color: var(--tenue); margin-top: 7px; }
+  .turno.yo .cuando { text-align: right; }
+
+  /* Formato tipo Markdown en las respuestas: parrafos, listas, codigo... */
+  .turno.ia .texto p { margin: 0 0 .85em; }
+  .turno.ia .texto p:last-child { margin-bottom: 0; }
+  .turno.ia .texto ul, .turno.ia .texto ol { margin: .2em 0 .85em 1.3em; padding: 0; }
+  .turno.ia .texto li { margin-bottom: .3em; }
+  .turno.ia .texto li:last-child { margin-bottom: 0; }
+  .turno.ia .texto strong { font-weight: 700; color: var(--texto); }
+  .turno.ia .texto code {
+    font-family: var(--mono); font-size: .87em;
+    background: var(--mas-alta); padding: .16em .42em; border-radius: 5px;
+  }
+  .turno.ia .texto pre {
+    background: var(--mas-alta); border: 1px solid var(--borde-suave); border-radius: 10px;
+    padding: 13px 15px; overflow-x: auto; margin: .2em 0 .85em;
+  }
+  .turno.ia .texto pre code { background: none; padding: 0; font-size: .85em; line-height: 1.55; }
+  .turno.ia .texto h1, .turno.ia .texto h2, .turno.ia .texto h3 {
+    font-family: var(--display); font-weight: 700; line-height: 1.3; margin: .9em 0 .4em;
+  }
+  .turno.ia .texto h1:first-child, .turno.ia .texto h2:first-child, .turno.ia .texto h3:first-child { margin-top: 0; }
+  .turno.ia .texto h1 { font-size: 1.28em; }
+  .turno.ia .texto h2 { font-size: 1.14em; }
+  .turno.ia .texto h3 { font-size: 1.04em; }
+
   .consumo {
     margin-top: 9px; font-family: var(--mono); font-size: 11.5px;
     color: var(--tenue); font-variant-numeric: tabular-nums;
   }
 
+  .pensando { display: inline-flex; align-items: center; gap: 9px; color: var(--tenue); }
   .escribiendo { display: inline-flex; gap: 5px; padding: 5px 0; }
   .escribiendo i {
     width: 6px; height: 6px; border-radius: 50%;
@@ -539,6 +567,10 @@
   .escribiendo i:nth-child(3) { animation-delay: .36s; }
   @keyframes latir { 0%,60%,100% { opacity: .25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
   @media (prefers-reduced-motion: reduce) { .escribiendo i { animation: none; opacity: .6; } }
+
+  #numSaldo { transition: color .35s ease; font-variant-numeric: tabular-nums; }
+  #numSaldo.bajando { color: var(--error); }
+  #numSaldo.subiendo { color: var(--ok); }
 
   /* --------- estado inicial --------- */
 
@@ -1222,6 +1254,8 @@
   var enviando = false;
   var hayMensajes = false;
   var tokenReset = null;
+  var saldoMostrado = null;
+  var reducirMovimiento = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // Un intercambio típico ronda los 3,6 créditos en modo Rápido.
   var CRED_POR_MSG = 3.6;
@@ -1425,8 +1459,38 @@
 
   function pintarSaldo() {
     var s = yo ? yo.creditBalance : 0;
-    $('numSaldo').textContent = num(s);
+    var el = $('numSaldo');
     $('chipSaldo').classList.toggle('vacio', s <= 0);
+
+    var previo = saldoMostrado;
+    saldoMostrado = s;
+    if (previo === null || previo === s || reducirMovimiento) {
+      el.textContent = num(s);
+      return;
+    }
+    animarSaldo(el, previo, s);
+  }
+
+  // Cuenta el numero de saldo desde su valor anterior hasta el nuevo, para que
+  // se vea subir o bajar en vez de saltar de golpe (como Claude o Same.new).
+  function animarSaldo(el, desde, hasta) {
+    var duracion = 550;
+    var inicio = null;
+    el.classList.toggle('bajando', hasta < desde);
+    el.classList.toggle('subiendo', hasta > desde);
+    function paso(marca) {
+      if (inicio === null) inicio = marca;
+      var avance = Math.min(1, (marca - inicio) / duracion);
+      var suavizado = 1 - Math.pow(1 - avance, 3);
+      el.textContent = num(Math.round(desde + (hasta - desde) * suavizado));
+      if (avance < 1) {
+        requestAnimationFrame(paso);
+      } else {
+        el.textContent = num(hasta);
+        setTimeout(function () { el.classList.remove('bajando', 'subiendo'); }, 500);
+      }
+    }
+    requestAnimationFrame(paso);
   }
 
   function pintarVerificacion() {
@@ -1490,6 +1554,24 @@
     hayMensajes = true;
   }
 
+  // "hace 1 min", "hace 2 horas"... para saber cuanto lleva cada turno.
+  function tiempoRelativo(ts) {
+    var seg = Math.round((Date.now() - ts) / 1000);
+    if (seg < 45) return 'justo ahora';
+    var min = Math.round(seg / 60);
+    if (min < 60) return 'hace ' + min + ' min';
+    var horas = Math.round(min / 60);
+    return 'hace ' + horas + (horas === 1 ? ' hora' : ' horas');
+  }
+
+  function actualizarTiempos() {
+    var els = document.querySelectorAll('.turno .cuando[data-ts]');
+    for (var k = 0; k < els.length; k++) {
+      els[k].textContent = tiempoRelativo(Number(els[k].getAttribute('data-ts')));
+    }
+  }
+  setInterval(actualizarTiempos, 30000);
+
   function turno(clase, quien, texto) {
     limpiarBienvenida();
     var d = document.createElement('div');
@@ -1500,7 +1582,12 @@
     var t = document.createElement('div');
     t.className = 'texto';
     if (texto !== null) t.textContent = texto;
-    d.appendChild(q); d.appendChild(t);
+    var ahora = Date.now();
+    var c = document.createElement('div');
+    c.className = 'cuando';
+    c.setAttribute('data-ts', String(ahora));
+    c.textContent = tiempoRelativo(ahora);
+    d.appendChild(q); d.appendChild(t); d.appendChild(c);
     $('lienzo').appendChild(d);
     abajo();
     return { caja: d, texto: t };
@@ -1528,6 +1615,88 @@
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviar(); }
   };
 
+  // Markdown minimo (parrafos, **negrita**, *cursiva*, `codigo`, ```bloques```,
+  // listas y # encabezados) para que las respuestas se vean como las de un
+  // chat serio y no como texto plano. Todo se escapa antes de formatear, asi
+  // que nada de lo que devuelva el modelo puede inyectar HTML.
+  var MARCA_BLOQUE = 'BLOQUE-DE-CODIGO-';
+
+  function renderizarMarkdown(texto) {
+    var bruto = String(texto == null ? '' : texto);
+    var bloques = [];
+    bruto = bruto.replace(/```[a-zA-Z0-9]*\n?([\s\S]*?)```/g, function (m, codigo) {
+      var idx = bloques.length;
+      bloques.push('<pre><code>' + esc(codigo.replace(/\n$/, '')) + '</code></pre>');
+      return MARCA_BLOQUE + idx;
+    });
+
+    function enlinea(s) {
+      s = esc(s);
+      s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+      s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+      return s;
+    }
+
+    var rePlaceholder = new RegExp('^' + MARCA_BLOQUE + '(\\d+)$');
+    function esPlaceholder(l) { return rePlaceholder.test(l.trim()); }
+    function esEncabezado(l) { return /^(#{1,3})\s+/.test(l); }
+    function esViñeta(l) { return /^\s*[-*]\s+/.test(l); }
+    function esNumerada(l) { return /^\s*\d+[.)]\s+/.test(l); }
+
+    var lineas = bruto.split('\n');
+    var html = '';
+    var i = 0;
+    while (i < lineas.length) {
+      var linea = lineas[i];
+
+      if (esPlaceholder(linea)) {
+        html += bloques[Number(linea.trim().replace(MARCA_BLOQUE, ''))];
+        i++; continue;
+      }
+
+      var encabezado = linea.match(/^(#{1,3})\s+(.*)$/);
+      if (encabezado) {
+        var nivel = encabezado[1].length;
+        html += '<h' + nivel + '>' + enlinea(encabezado[2]) + '</h' + nivel + '>';
+        i++; continue;
+      }
+
+      if (esViñeta(linea)) {
+        var items = [];
+        while (i < lineas.length && esViñeta(lineas[i])) {
+          items.push('<li>' + enlinea(lineas[i].replace(/^\s*[-*]\s+/, '')) + '</li>');
+          i++;
+        }
+        html += '<ul>' + items.join('') + '</ul>';
+        continue;
+      }
+
+      if (esNumerada(linea)) {
+        var itemsN = [];
+        while (i < lineas.length && esNumerada(lineas[i])) {
+          itemsN.push('<li>' + enlinea(lineas[i].replace(/^\s*\d+[.)]\s+/, '')) + '</li>');
+          i++;
+        }
+        html += '<ol>' + itemsN.join('') + '</ol>';
+        continue;
+      }
+
+      if (linea.trim() === '') { i++; continue; }
+
+      var parrafo = [linea];
+      i++;
+      while (i < lineas.length && lineas[i].trim() !== '' && !esEncabezado(lineas[i]) &&
+             !esViñeta(lineas[i]) && !esNumerada(lineas[i]) && !esPlaceholder(lineas[i])) {
+        parrafo.push(lineas[i]);
+        i++;
+      }
+      html += '<p>' + parrafo.map(enlinea).join('<br>') + '</p>';
+    }
+
+    return html || '<p></p>';
+  }
+
   window.enviar = function () {
     if (enviando) return;
     var t = $('entrada');
@@ -1541,7 +1710,7 @@
 
     var mio = turno('yo', 'Tú', mensaje);
     var esperando = turno('ia', 'LunaticoIA', null);
-    esperando.texto.innerHTML = '<span class="escribiendo"><i></i><i></i><i></i></span>';
+    esperando.texto.innerHTML = '<span class="pensando">Pensando<span class="escribiendo"><i></i><i></i><i></i></span></span>';
 
     // Si el fetch revienta, la peticion nunca salio: devolvemos el texto al
     // campo y quitamos los turnos, para que reintentar sea pulsar Enter.
@@ -1565,7 +1734,7 @@
         return;
       }
 
-      esperando.texto.textContent = r.data.response;
+      esperando.texto.innerHTML = renderizarMarkdown(r.data.response);
 
       var c = r.data.consumo;
       if (c) {
