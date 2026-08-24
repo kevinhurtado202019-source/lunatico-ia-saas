@@ -563,11 +563,25 @@
     font-family: var(--mono); font-size: .87em;
     background: var(--mas-alta); padding: .16em .42em; border-radius: 5px;
   }
+  .turno.ia .texto .bloque-codigo { position: relative; margin: .2em 0 .85em; }
   .turno.ia .texto pre {
     background: var(--mas-alta); border: 1px solid var(--borde-suave); border-radius: 10px;
-    padding: 13px 15px; overflow-x: auto; margin: .2em 0 .85em;
+    padding: 13px 15px; overflow-x: auto; margin: 0;
   }
   .turno.ia .texto pre code { background: none; padding: 0; font-size: .85em; line-height: 1.55; }
+  .turno.ia .texto .copiar-codigo {
+    position: absolute; top: 8px; right: 8px; z-index: 1;
+    background: var(--noche); color: var(--tenue); border: 1px solid var(--borde-suave);
+    border-radius: 6px; padding: 4px 10px; font-size: .75em; font-family: var(--ui);
+    cursor: pointer; opacity: 0; transition: opacity .15s, color .15s, border-color .15s;
+  }
+  .turno.ia .texto .bloque-codigo:hover .copiar-codigo,
+  .turno.ia .texto .copiar-codigo:focus-visible { opacity: 1; }
+  .turno.ia .texto .copiar-codigo:hover { color: var(--texto); border-color: var(--luna); }
+  .turno.ia .texto .copiar-codigo.copiado { opacity: 1; color: var(--luna); border-color: var(--luna); }
+  @media (hover: none) {
+    .turno.ia .texto .copiar-codigo { opacity: 1; }
+  }
   .turno.ia .texto h1, .turno.ia .texto h2, .turno.ia .texto h3 {
     font-family: var(--display); font-weight: 700; line-height: 1.3; margin: .9em 0 .4em;
   }
@@ -1722,6 +1736,40 @@
     ajustarAlto();
   };
 
+  window.copiarCodigo = function (boton) {
+    var code = boton.parentElement.querySelector('pre code');
+    if (!code) return;
+    var texto = code.textContent || '';
+    function marcarCopiado() {
+      var textoOriginal = boton.textContent;
+      boton.textContent = '¡Copiado!';
+      boton.classList.add('copiado');
+      setTimeout(function () {
+        boton.textContent = textoOriginal;
+        boton.classList.remove('copiado');
+      }, 1600);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(texto).then(marcarCopiado, function () {
+        copiarConFallback(texto, marcarCopiado);
+      });
+    } else {
+      copiarConFallback(texto, marcarCopiado);
+    }
+  };
+
+  function copiarConFallback(texto, alTerminar) {
+    var area = document.createElement('textarea');
+    area.value = texto;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(area);
+    alTerminar();
+  }
+
   // Markdown minimo (parrafos, **negrita**, *cursiva*, `codigo`, ```bloques```,
   // listas y # encabezados) para que las respuestas se vean como las de un
   // chat serio y no como texto plano. Todo se escapa antes de formatear, asi
@@ -1733,7 +1781,12 @@
     var bloques = [];
     bruto = bruto.replace(/```[a-zA-Z0-9]*\n?([\s\S]*?)```/g, function (m, codigo) {
       var idx = bloques.length;
-      bloques.push('<pre><code>' + esc(codigo.replace(/\n$/, '')) + '</code></pre>');
+      bloques.push(
+        '<div class="bloque-codigo">' +
+          '<button type="button" class="copiar-codigo" onclick="copiarCodigo(this)" aria-label="Copiar código">Copiar</button>' +
+          '<pre><code>' + esc(codigo.replace(/\n$/, '')) + '</code></pre>' +
+        '</div>'
+      );
       return MARCA_BLOQUE + idx;
     });
 
