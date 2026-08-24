@@ -1,0 +1,1467 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LunaticoIA</title>
+<meta name="description" content="Conversa con IA. Compra créditos, sin suscripción.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230B0E17'/%3E%3Cpath d='M20.5 20.8a7.2 7.2 0 0 1-8.9-9.6 7.6 7.6 0 1 0 8.9 9.6z' fill='%23E8C88A'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Public+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root {
+    --noche:        #0B0E17;
+    --superficie:   #131826;
+    --alta:         #1B2233;
+    --mas-alta:     #232C42;
+    --borde:        #273148;
+    --borde-suave:  #1D2537;
+    --texto:        #E9EBF3;
+    --suave:        #A7B0C6;
+    --tenue:        #8C97AE;   /* 4.74 minimo sobre los fondos usados (AA) */
+    --luna:         #E8C88A;
+    --luna-viva:    #F2D9A6;
+    --luna-fondo:   #2A2317;
+    --ok:           #6BC79A;
+    --alerta:       #E3A863;
+    --error:        #EC8A80;
+
+    --display: "Fraunces", Georgia, serif;
+    --ui: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+
+    --r: 12px;
+    --sombra: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px -16px rgba(0,0,0,.7);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  /* 100% no encoge cuando se abre el teclado del movil y el redactor queda
+     debajo. dvh si sigue al area visible; el 100% queda de respaldo. */
+  html, body { height: 100%; height: 100dvh; }
+
+  body {
+    margin: 0;
+    background: var(--noche);
+    color: var(--texto);
+    font-family: var(--ui);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  /* Cielo sutil: dos halos muy tenues, nada de degradado morado */
+  body::before {
+    content: "";
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(60rem 40rem at 78% -12%, rgba(232,200,138,.055), transparent 62%),
+      radial-gradient(50rem 36rem at 8% 108%, rgba(96,120,200,.06), transparent 60%);
+  }
+
+  button, input, textarea, select { font: inherit; color: inherit; }
+  button { cursor: pointer; border: none; background: none; }
+  :focus-visible { outline: 2px solid var(--luna); outline-offset: 2px; border-radius: 6px; }
+  .oculto { display: none !important; }
+
+  .marca {
+    font-family: var(--display);
+    font-weight: 700;
+    letter-spacing: -.02em;
+    display: inline-flex; align-items: center; gap: 9px;
+  }
+  .marca svg { width: 1em; height: 1em; flex: none; }
+
+
+  /* ===================== LANDING ===================== */
+
+  #landing {
+    position: absolute; inset: 0; z-index: 1;
+    overflow-y: auto; overflow-x: hidden;
+  }
+
+  .lp { max-width: 940px; margin: 0 auto; padding: 0 22px; }
+
+  .lp-nav {
+    display: flex; align-items: center; gap: 14px;
+    padding: 20px 0 0;
+  }
+  .lp-nav .marca { font-size: 20px; }
+  .lp-nav .marca svg { color: var(--luna); }
+
+  .btn-texto {
+    color: var(--suave); font-weight: 500; font-size: 15px;
+    padding: 9px 14px; border-radius: 9px;
+  }
+  .btn-texto:hover { color: var(--texto); background: var(--alta); }
+
+  /* Mas especifico que .btn-luna, que se define despues y traeria width:100% */
+  .btn.btn-luna-auto { background: var(--luna); color: #21180A; width: auto; }
+
+  .hero { padding: clamp(56px, 11vw, 104px) 0 clamp(40px, 7vw, 68px); text-align: center; }
+  .hero h1 {
+    font-family: var(--display); font-weight: 600;
+    font-size: clamp(36px, 7.6vw, 62px); line-height: 1.03;
+    letter-spacing: -.028em; margin: 0 0 20px; text-wrap: balance;
+  }
+  .hero h1 em { font-style: normal; color: var(--luna); }
+  .hero .bajada {
+    font-size: clamp(17px, 2.4vw, 20px); color: var(--suave);
+    max-width: 40ch; margin: 0 auto 34px; text-wrap: balance;
+  }
+  .hero-botones {
+    display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
+  }
+  .hero .letra-chica { margin-top: 18px; font-size: 13.5px; color: var(--tenue); }
+
+  .pilares {
+    display: grid; gap: 14px; padding: 12px 0 clamp(48px, 8vw, 76px);
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  }
+  .pilar {
+    background: var(--superficie);
+    border: 1px solid var(--borde-suave);
+    border-radius: 14px; padding: 24px 22px;
+  }
+  .pilar .icn {
+    width: 34px; height: 34px; border-radius: 9px;
+    background: var(--luna-fondo); color: var(--luna);
+    display: grid; place-items: center; margin-bottom: 14px;
+  }
+  .pilar .icn svg { width: 18px; height: 18px; }
+  .pilar h3 {
+    font-family: var(--display); font-weight: 600; font-size: 18.5px;
+    letter-spacing: -.012em; margin: 0 0 7px;
+  }
+  .pilar p { font-size: 15px; color: var(--tenue); line-height: 1.62; margin: 0; }
+
+  .lp-seccion { padding: clamp(40px, 7vw, 66px) 0; border-top: 1px solid var(--borde-suave); }
+  .lp-seccion > h2 {
+    font-family: var(--display); font-weight: 600;
+    font-size: clamp(25px, 4.2vw, 34px); letter-spacing: -.02em;
+    margin: 0 0 12px; text-wrap: balance;
+  }
+  .lp-seccion > .intro {
+    color: var(--tenue); max-width: 56ch; margin: 0 0 30px; font-size: 16.5px;
+  }
+
+  .cuenta {
+    background: var(--superficie); border: 1px solid var(--borde);
+    border-radius: 14px; padding: 24px 26px;
+    display: grid; gap: 18px;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  }
+  .cuenta .celda .k {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--tenue); margin-bottom: 6px;
+  }
+  .cuenta .celda .v {
+    font-family: var(--display); font-weight: 600; font-size: 21px;
+    letter-spacing: -.015em;
+  }
+  .cuenta .celda .v small {
+    display: block; font-family: var(--ui); font-weight: 400;
+    font-size: 13.5px; color: var(--tenue); margin-top: 4px; letter-spacing: 0;
+  }
+
+  .precios {
+    display: grid; gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(212px, 1fr));
+  }
+  .plan {
+    background: var(--superficie); border: 1px solid var(--borde-suave);
+    border-radius: 14px; padding: 24px 22px 22px;
+    display: flex; flex-direction: column; gap: 5px;
+    transition: border-color .15s, transform .15s;
+  }
+  .plan:hover { border-color: var(--borde); transform: translateY(-2px); }
+  .plan.destacado { border-color: rgba(232,200,138,.45); background: var(--alta); }
+  .plan .cinta {
+    font-family: var(--ui); font-size: 10px; font-weight: 600;
+    letter-spacing: .09em; text-transform: uppercase;
+    color: var(--luna); margin-bottom: 4px;
+  }
+  .plan h3 {
+    font-family: var(--display); font-weight: 600; font-size: 18px;
+    margin: 0; letter-spacing: -.012em;
+  }
+  .plan .valor {
+    font-family: var(--mono); font-weight: 600; font-size: 27px;
+    margin: 8px 0 2px; font-variant-numeric: tabular-nums;
+  }
+  .plan .moneda { font-size: 12.5px; color: var(--tenue); margin-bottom: 14px; }
+  .plan ul { list-style: none; margin: 0 0 18px; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+  .plan li { font-size: 14.5px; color: var(--suave); display: flex; gap: 8px; }
+  .plan li::before { content: "·"; color: var(--luna); font-weight: 700; }
+  .plan .btn { margin-top: auto; width: 100%; text-align: center; }
+
+  .faq { display: flex; flex-direction: column; gap: 2px; }
+  .faq details {
+    background: var(--superficie); border: 1px solid var(--borde-suave);
+    border-radius: 11px; padding: 0;
+  }
+  .faq details + details { margin-top: 9px; }
+  .faq summary {
+    cursor: pointer; padding: 16px 20px; list-style: none;
+    font-weight: 600; font-size: 16px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after {
+    content: "+"; margin-left: auto; color: var(--luna);
+    font-family: var(--mono); font-size: 18px; line-height: 1;
+  }
+  .faq details[open] summary::after { content: "−"; }
+  .faq .r {
+    padding: 0 20px 18px; color: var(--tenue);
+    font-size: 15.5px; line-height: 1.65; max-width: 62ch; margin: 0;
+  }
+
+  .cierre { text-align: center; padding: clamp(48px, 8vw, 82px) 0; }
+  .cierre h2 {
+    font-family: var(--display); font-weight: 600;
+    font-size: clamp(26px, 4.6vw, 38px); letter-spacing: -.022em;
+    margin: 0 0 14px; text-wrap: balance;
+  }
+  .cierre p { color: var(--tenue); margin: 0 auto 26px; max-width: 44ch; }
+
+  .lp-pie {
+    border-top: 1px solid var(--borde-suave);
+    padding: 26px 0 40px; font-size: 13.5px; color: var(--tenue);
+    display: flex; gap: 10px 22px; flex-wrap: wrap; align-items: center;
+  }
+
+  /* ===================== ACCESO ===================== */
+
+  #acceso {
+    position: relative; z-index: 1;
+    height: 100%;
+    display: grid; place-items: center;
+    padding: 24px;
+    overflow-y: auto;
+  }
+
+  .tarjeta-acceso {
+    width: 100%; max-width: 404px;
+    background: var(--superficie);
+    border: 1px solid var(--borde);
+    border-radius: 18px;
+    padding: 38px 34px 32px;
+    box-shadow: var(--sombra);
+  }
+
+  .tarjeta-acceso .marca { font-size: 28px; color: var(--texto); }
+  .tarjeta-acceso .marca svg { color: var(--luna); }
+
+  .lema {
+    color: var(--tenue); font-size: 14.5px;
+    margin: 10px 0 30px;
+  }
+
+  .campo { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
+  .campo label {
+    font-size: 12px; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--tenue); font-weight: 600;
+  }
+  .campo input {
+    background: var(--noche);
+    border: 1px solid var(--borde);
+    border-radius: 10px;
+    padding: 12px 14px;
+    transition: border-color .15s;
+  }
+  .campo input:focus { outline: none; border-color: var(--luna); }
+
+  .btn {
+    border-radius: 10px; padding: 12px 18px;
+    font-weight: 600; letter-spacing: -.005em;
+    transition: filter .15s, background .15s, border-color .15s;
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; filter: none; }
+  .btn-luna { background: var(--luna); color: #21180A; width: 100%; }
+  .btn-borde {
+    background: transparent; border: 1px solid var(--borde); color: var(--texto);
+  }
+  .btn-borde:hover { border-color: var(--tenue); }
+
+  .cambiar {
+    margin-top: 20px; text-align: center;
+    font-size: 14.5px; color: var(--tenue);
+  }
+  .cambiar button { color: var(--luna); font-weight: 600; }
+  .cambiar button:hover { text-decoration: underline; }
+
+  .aviso {
+    border-radius: 9px; padding: 10px 13px; font-size: 14.5px;
+    margin-bottom: 16px;
+    background: rgba(236,138,128,.1);
+    border: 1px solid rgba(236,138,128,.32);
+    color: var(--error);
+  }
+
+  .aviso.ok {
+    background: rgba(107,199,154,.1);
+    border-color: rgba(107,199,154,.32);
+    color: var(--ok);
+  }
+
+  .olvide { text-align: right; margin: -8px 0 16px; }
+  .olvide button { color: var(--tenue); font-size: 13.5px; }
+  .olvide button:hover { color: var(--luna); }
+
+  /* ===================== APP ===================== */
+
+  #app { position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column; }
+
+  header.barra {
+    flex: none;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 18px; height: 60px;
+    border-bottom: 1px solid var(--borde-suave);
+    background: rgba(11,14,23,.82);
+    backdrop-filter: blur(12px);
+  }
+  header .marca { font-size: 19px; }
+  header .marca svg { color: var(--luna); }
+  .empuje { flex: 1; }
+
+  .banda-correo {
+    flex: none;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 18px;
+    font-size: 13.5px; color: var(--alerta);
+    background: rgba(227,168,99,.1);
+    border-bottom: 1px solid rgba(227,168,99,.3);
+  }
+  .banda-correo button {
+    color: var(--luna); font-weight: 600; text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .saldo {
+    display: inline-flex; align-items: baseline; gap: 7px;
+    background: var(--alta);
+    border: 1px solid var(--borde);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font-size: 14px;
+    transition: border-color .15s;
+  }
+  .saldo:hover { border-color: var(--luna); }
+  .saldo b {
+    font-family: var(--mono); font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--luna); font-size: 14.5px;
+  }
+  .saldo span { color: var(--tenue); font-size: 13px; }
+  .saldo.vacio { border-color: rgba(236,138,128,.5); }
+  .saldo.vacio b { color: var(--error); }
+
+  .icono {
+    width: 38px; height: 38px; border-radius: 10px;
+    display: grid; place-items: center; color: var(--suave);
+    transition: background .15s, color .15s;
+  }
+  .icono:hover { background: var(--alta); color: var(--texto); }
+  .icono svg { width: 19px; height: 19px; }
+
+  /* --------- conversación --------- */
+
+  /* Ancla la conversacion abajo cuando es corta. Con justify-content:flex-end
+     el contenido que desborda se sale por arriba y ya no se puede volver a
+     leer; con margin-top:auto en el hijo, el scroll sigue funcionando. */
+  #hilo {
+    flex: 1; overflow-y: auto; scroll-behavior: smooth;
+    display: flex; flex-direction: column;
+  }
+  @media (prefers-reduced-motion: reduce) { #hilo { scroll-behavior: auto; } }
+
+  .centro { width: 100%; max-width: 720px; margin: auto auto 0; padding: 30px 20px 20px; }
+
+  .turno { margin-bottom: 26px; animation: entrar .28s ease both; }
+  @keyframes entrar { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .turno { animation: none; } }
+
+  .turno .quien {
+    font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase;
+    font-weight: 600; color: var(--tenue); margin-bottom: 8px;
+  }
+  .turno .texto { white-space: pre-wrap; word-wrap: break-word; }
+
+  /* El usuario en burbuja; el asistente como texto corrido, más legible */
+  .turno.yo { display: flex; justify-content: flex-end; }
+  .turno.yo .quien { display: none; }
+  .turno.yo .texto {
+    background: var(--alta);
+    border: 1px solid var(--borde-suave);
+    border-radius: 16px 16px 4px 16px;
+    padding: 12px 16px;
+    max-width: 80%;
+  }
+  .turno.ia .texto { font-size: 16.5px; line-height: 1.72; max-width: 34em; }
+  .turno.ia .quien { color: var(--luna); }
+
+  .consumo {
+    margin-top: 9px; font-family: var(--mono); font-size: 11.5px;
+    color: var(--tenue); font-variant-numeric: tabular-nums;
+  }
+
+  .escribiendo { display: inline-flex; gap: 5px; padding: 5px 0; }
+  .escribiendo i {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--tenue); animation: latir 1.3s infinite ease-in-out;
+  }
+  .escribiendo i:nth-child(2) { animation-delay: .18s; }
+  .escribiendo i:nth-child(3) { animation-delay: .36s; }
+  @keyframes latir { 0%,60%,100% { opacity: .25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+  @media (prefers-reduced-motion: reduce) { .escribiendo i { animation: none; opacity: .6; } }
+
+  /* --------- estado inicial --------- */
+
+  .bienvenida { padding: 56px 20px 20px; text-align: center; }
+  .bienvenida h1 {
+    font-family: var(--display); font-weight: 600;
+    font-size: clamp(27px, 5vw, 38px); letter-spacing: -.02em;
+    margin: 0 0 10px; text-wrap: balance;
+  }
+  .bienvenida p { color: var(--tenue); margin: 0 auto; max-width: 46ch; }
+
+  .sugerencias {
+    display: grid; gap: 10px; margin-top: 30px;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    text-align: left;
+  }
+  .sugerencia {
+    background: var(--superficie);
+    border: 1px solid var(--borde-suave);
+    border-radius: var(--r);
+    padding: 14px 16px;
+    font-size: 14.5px; color: var(--suave);
+    transition: border-color .15s, color .15s, transform .15s;
+  }
+  .sugerencia:hover {
+    border-color: var(--borde); color: var(--texto); transform: translateY(-1px);
+  }
+
+  /* --------- redactor --------- */
+
+  .pie { flex: none; padding: 10px 20px 18px; }
+  .redactor { max-width: 720px; margin: 0 auto; }
+
+  .caja {
+    background: var(--superficie);
+    border: 1px solid var(--borde);
+    border-radius: 16px;
+    padding: 12px 12px 10px;
+    transition: border-color .15s;
+  }
+  .caja:focus-within { border-color: var(--luna); }
+
+  .caja textarea {
+    width: 100%; background: none; border: none; resize: none;
+    padding: 2px 4px; max-height: 190px; line-height: 1.6;
+  }
+  .caja textarea:focus { outline: none; }
+  .caja textarea::placeholder { color: var(--tenue); }
+
+  .controles {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 8px;
+  }
+
+  .modo {
+    background: var(--alta); border: 1px solid var(--borde);
+    border-radius: 999px; padding: 6px 12px; font-size: 13px;
+    color: var(--suave); appearance: none; cursor: pointer;
+    padding-right: 28px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' fill='none' stroke='%236D7893' stroke-width='1.6'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 11px center; background-size: 9px;
+  }
+  .modo:hover { border-color: var(--tenue); }
+
+  .enviar {
+    margin-left: auto; width: 36px; height: 36px; border-radius: 10px;
+    background: var(--luna); color: #21180A;
+    display: grid; place-items: center;
+    transition: opacity .15s, filter .15s;
+  }
+  .enviar:hover { filter: brightness(1.08); }
+  .enviar:disabled { opacity: .32; cursor: not-allowed; filter: none; }
+  .enviar svg { width: 17px; height: 17px; }
+
+  .nota-pie {
+    text-align: center; font-size: 12px; color: var(--tenue);
+    margin: 10px auto 0; max-width: 66ch;
+  }
+
+  /* --------- panel lateral --------- */
+
+  .velo {
+    position: fixed; inset: 0; z-index: 40;
+    background: rgba(5,7,12,.66);
+    backdrop-filter: blur(3px);
+    opacity: 0; pointer-events: none; transition: opacity .22s;
+  }
+  .velo.abierto { opacity: 1; pointer-events: auto; }
+
+  .panel {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 41;
+    width: min(430px, 100%);
+    background: var(--superficie);
+    border-left: 1px solid var(--borde);
+    transform: translateX(100%);
+    transition: transform .26s cubic-bezier(.22,.7,.3,1);
+    display: flex; flex-direction: column;
+  }
+  .panel.abierto { transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .velo, .panel { transition: none; }
+  }
+
+  .panel-cabeza {
+    flex: none; display: flex; align-items: center; gap: 12px;
+    padding: 16px 18px; border-bottom: 1px solid var(--borde-suave);
+  }
+  .panel-cabeza h2 {
+    font-family: var(--display); font-weight: 600; font-size: 20px;
+    margin: 0; letter-spacing: -.015em;
+  }
+  .panel-cuerpo { flex: 1; overflow-y: auto; padding: 20px 18px 30px; }
+
+  .bloque { margin-bottom: 28px; }
+  .bloque h3 {
+    font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--tenue); margin: 0 0 12px; font-weight: 600;
+  }
+
+  .dato {
+    display: flex; justify-content: space-between; gap: 16px;
+    padding: 11px 0; border-bottom: 1px solid var(--borde-suave);
+    font-size: 15px;
+  }
+  .dato:last-child { border-bottom: none; }
+  .dato span { color: var(--tenue); }
+  .dato b { font-weight: 600; }
+  .dato b.num { font-family: var(--mono); color: var(--luna); font-variant-numeric: tabular-nums; }
+
+  .paquete {
+    background: var(--alta);
+    border: 1px solid var(--borde-suave);
+    border-radius: var(--r);
+    padding: 16px 17px;
+    margin-bottom: 11px;
+    display: flex; align-items: center; gap: 14px;
+    transition: border-color .15s;
+  }
+  .paquete:hover { border-color: var(--borde); }
+  .paquete.destacado { border-color: rgba(232,200,138,.45); background: var(--mas-alta); }
+
+  .paquete .info { flex: 1; min-width: 0; }
+  .paquete .nombre {
+    font-family: var(--display); font-weight: 600; font-size: 17px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .etiqueta {
+    font-family: var(--ui); font-size: 10px; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase;
+    background: var(--luna-fondo); color: var(--luna);
+    padding: 2px 7px; border-radius: 4px;
+  }
+  .paquete .detalle {
+    font-size: 13px; color: var(--tenue); margin-top: 3px;
+    font-variant-numeric: tabular-nums;
+  }
+  .paquete .precio {
+    font-family: var(--mono); font-weight: 600; font-size: 15px;
+    text-align: right; white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .paquete .precio small { display: block; font-family: var(--ui); font-weight: 400; font-size: 11px; color: var(--tenue); }
+
+  .paquete button { flex: none; }
+  .paquete button.btn { padding: 9px 15px; font-size: 14px; }
+
+  .nota {
+    font-size: 13.5px; color: var(--tenue); line-height: 1.6;
+    background: var(--noche); border: 1px solid var(--borde-suave);
+    border-radius: 10px; padding: 13px 15px;
+  }
+
+  /* En pantallas tactiles los controles necesitan 44px para acertarles */
+  @media (pointer: coarse) {
+    .icono { width: 44px; height: 44px; }
+    .enviar { width: 44px; height: 44px; }
+    .saldo { padding: 10px 16px; }
+    .modo { padding-top: 10px; padding-bottom: 10px; }
+    .sugerencia { padding: 16px 18px; }
+    .paquete button.btn { padding: 12px 16px; }
+  }
+
+  @media (max-width: 620px) {
+    .centro { padding: 22px 16px 8px; }
+    .pie { padding: 8px 12px 14px; }
+    header.barra { padding: 0 12px; gap: 10px; }
+    .saldo span { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===================== LANDING ===================== -->
+<div id="landing">
+  <div class="lp">
+    <nav class="lp-nav">
+      <div class="marca"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M15.8 15.4A8 8 0 0 1 8.6 4.1a8.4 8.4 0 1 0 7.2 11.3z"/></svg> LunaticoIA</div>
+      <div class="empuje"></div>
+      <button class="btn-texto" onclick="irAcceso('entrar')">Entrar</button>
+      <button class="btn btn-luna btn-luna-auto" onclick="irAcceso('crear')">Empezar gratis</button>
+    </nav>
+
+    <header class="hero">
+      <h1>IA sin suscripción,<br>y pagas con <em>Nequi</em>.</h1>
+      <p class="bajada">
+        Compra créditos cuando los necesites. No caducan, nadie te cobra el mes
+        siguiente, y no hace falta tarjeta internacional.
+      </p>
+      <div class="hero-botones">
+        <button class="btn btn-luna btn-luna-auto" onclick="irAcceso('crear')">Probar con 100 créditos gratis</button>
+        <button class="btn btn-borde" onclick="document.getElementById('precios').scrollIntoView({behavior:'smooth'})">Ver precios</button>
+      </div>
+      <p class="letra-chica">Sin tarjeta para empezar · Sin cobros automáticos</p>
+    </header>
+
+    <div class="pilares">
+      <div class="pilar">
+        <div class="icn"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M6 6l12 12"/></svg></div>
+        <h3>Sin mensualidad</h3>
+        <p>Compras un paquete y ya está. No hay renovación automática ni sorpresas en el extracto a fin de mes.</p>
+      </div>
+      <div class="pilar">
+        <div class="icn"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-5 4 3 8-8"/><path d="M15 7h5v5"/></svg></div>
+        <h3>Pagas lo que consumes</h3>
+        <p>Cada respuesta descuenta según los tokens que realmente usa. Una pregunta corta cuesta poco, y lo ves en pantalla.</p>
+      </div>
+      <div class="pilar">
+        <div class="icn"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M2.5 10h19"/></svg></div>
+        <h3>Paga como pagas todo</h3>
+        <p>Tarjeta, PSE o Nequi, en pesos colombianos. Sin conversiones de moneda ni tarjetas que no tienes.</p>
+      </div>
+    </div>
+
+    <section class="lp-seccion">
+      <h2>Cómo funcionan los créditos</h2>
+      <p class="intro">
+        Nada de letra pequeña: esto es exactamente lo que se descuenta y por qué.
+      </p>
+      <div class="cuenta">
+        <div class="celda">
+          <div class="k">La unidad</div>
+          <div class="v">1 crédito<small>Equivale a 1.000 tokens facturables</small></div>
+        </div>
+        <div class="celda">
+          <div class="k">Un mensaje normal</div>
+          <div class="v">~4 créditos<small>Depende de lo largo que sea</small></div>
+        </div>
+        <div class="celda">
+          <div class="k">Caducidad</div>
+          <div class="v">Ninguna<small>Los créditos son tuyos hasta que los uses</small></div>
+        </div>
+      </div>
+      <p class="intro" style="margin:22px 0 0">
+        Debajo de cada respuesta ves lo que costó, en créditos y en tokens. Si una
+        conversación se alarga, cada respuesta cuesta un poco más, porque se
+        reenvía lo hablado antes para que la IA mantenga el contexto. Preferimos
+        contártelo a que lo descubras mirando tu saldo.
+      </p>
+    </section>
+
+    <section class="lp-seccion" id="precios">
+      <h2>Paquetes</h2>
+      <p class="intro">Pago único, en pesos. Mientras más grande el paquete, más barato sale cada crédito.</p>
+      <div class="precios" id="listaPrecios">Cargando…</div>
+    </section>
+
+    <section class="lp-seccion">
+      <h2>Preguntas</h2>
+      <div class="faq">
+        <details>
+          <summary>¿Me van a cobrar todos los meses?</summary>
+          <p class="r">No. No existe la suscripción. Compras un paquete de créditos y no vuelve a haber ningún cobro hasta que tú decidas comprar otro.</p>
+        </details>
+        <details>
+          <summary>¿Los créditos se vencen?</summary>
+          <p class="r">No caducan. Si compras hoy y vuelves en seis meses, tu saldo sigue igual.</p>
+        </details>
+        <details>
+          <summary>¿Con qué puedo pagar?</summary>
+          <p class="r">Tarjeta de crédito o débito, PSE y Nequi, en pesos colombianos. El pago se procesa con Wompi, la pasarela de Bancolombia.</p>
+        </details>
+        <details>
+          <summary>¿Qué pasa si me quedo sin créditos a mitad de una conversación?</summary>
+          <p class="r">El chat se pausa y te avisa. No se pierde nada de lo que ya hablaste: al recargar, sigues donde estabas.</p>
+        </details>
+        <details>
+          <summary>¿Y si la respuesta falla?</summary>
+          <p class="r">No se te cobra. El descuento ocurre solo cuando la respuesta llega bien.</p>
+        </details>
+        <details>
+          <summary>¿Hay que dar tarjeta para probar?</summary>
+          <p class="r">No. Te registras con correo y contraseña, y empiezas con 100 créditos de regalo, que dan para unas 28 respuestas.</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="cierre">
+      <h2>Empieza con 100 créditos</h2>
+      <p>Sin tarjeta, sin compromiso. Si te sirve, compras más; si no, no vuelves.</p>
+      <button class="btn btn-luna btn-luna-auto" onclick="irAcceso('crear')">Crear mi cuenta</button>
+    </section>
+
+    <footer class="lp-pie">
+      <div class="marca" style="font-size:15px;color:var(--tenue)"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M15.8 15.4A8 8 0 0 1 8.6 4.1a8.4 8.4 0 1 0 7.2 11.3z"/></svg> LunaticoIA</div>
+      <div class="empuje"></div>
+      <span>Pagos procesados por Wompi</span>
+    </footer>
+  </div>
+</div>
+
+<!-- ===================== ACCESO ===================== -->
+<div id="acceso" class="oculto">
+  <div class="tarjeta-acceso">
+    <div class="marca">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M15.8 15.4A8 8 0 0 1 8.6 4.1a8.4 8.4 0 1 0 7.2 11.3z"/></svg>
+      LunaticoIA
+    </div>
+    <p class="lema">Conversa con IA. Compras créditos cuando los necesitas — sin suscripción ni cobros automáticos.</p>
+
+    <div id="avisoAcceso" class="aviso oculto"></div>
+
+    <form id="formEntrar" onsubmit="entrar(event)">
+      <div class="campo">
+        <label for="correoEntrar">Correo</label>
+        <input type="email" id="correoEntrar" autocomplete="email" required>
+      </div>
+      <div class="campo">
+        <label for="claveEntrar">Contraseña</label>
+        <input type="password" id="claveEntrar" autocomplete="current-password" required>
+      </div>
+      <p class="olvide"><button type="button" onclick="irAcceso('recuperar')">¿Olvidaste tu contraseña?</button></p>
+      <button type="submit" class="btn btn-luna" id="btnEntrar">Entrar</button>
+      <p class="cambiar">¿Aún no tienes cuenta? <button type="button" onclick="alternar()">Crea una</button></p>
+      <p class="cambiar" style="margin-top:10px"><button type="button" onclick="volverLanding()">← Volver</button></p>
+    </form>
+
+    <form id="formCrear" class="oculto" onsubmit="crearCuenta(event)">
+      <div class="campo">
+        <label for="nombreCrear">Nombre</label>
+        <input type="text" id="nombreCrear" autocomplete="name" required>
+      </div>
+      <div class="campo">
+        <label for="correoCrear">Correo</label>
+        <input type="email" id="correoCrear" autocomplete="email" required>
+      </div>
+      <div class="campo">
+        <label for="claveCrear">Contraseña</label>
+        <input type="password" id="claveCrear" autocomplete="new-password" minlength="8" required>
+      </div>
+      <button type="submit" class="btn btn-luna" id="btnCrear">Crear cuenta</button>
+      <p class="cambiar">Empiezas con 100 créditos de regalo. <button type="button" onclick="alternar()">Ya tengo cuenta</button></p>
+      <p class="cambiar" style="margin-top:10px"><button type="button" onclick="volverLanding()">← Volver</button></p>
+    </form>
+
+    <form id="formRecuperar" class="oculto" onsubmit="pedirRecuperacion(event)">
+      <p class="lema" style="margin-top:0">Te enviamos un enlace a tu correo para elegir una nueva contraseña.</p>
+      <div class="campo">
+        <label for="correoRecuperar">Correo</label>
+        <input type="email" id="correoRecuperar" autocomplete="email" required>
+      </div>
+      <button type="submit" class="btn btn-luna" id="btnRecuperar">Enviar enlace</button>
+      <p class="cambiar" style="margin-top:10px"><button type="button" onclick="irAcceso('entrar')">← Volver a entrar</button></p>
+    </form>
+
+    <form id="formNueva" class="oculto" onsubmit="guardarNuevaPassword(event)">
+      <p class="lema" style="margin-top:0">Elige tu nueva contraseña.</p>
+      <div class="campo">
+        <label for="claveNueva">Nueva contraseña</label>
+        <input type="password" id="claveNueva" autocomplete="new-password" minlength="8" required>
+      </div>
+      <button type="submit" class="btn btn-luna" id="btnNueva">Guardar contraseña</button>
+      <p class="cambiar" style="margin-top:10px"><button type="button" onclick="irAcceso('entrar')">← Volver a entrar</button></p>
+    </form>
+  </div>
+</div>
+
+<!-- ===================== APP ===================== -->
+<div id="app" class="oculto">
+  <header class="barra">
+    <div class="marca">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M15.8 15.4A8 8 0 0 1 8.6 4.1a8.4 8.4 0 1 0 7.2 11.3z"/></svg>
+      LunaticoIA
+    </div>
+    <div class="empuje"></div>
+    <button class="saldo" id="chipSaldo" onclick="abrirPanel('paquetes')" title="Ver paquetes de créditos">
+      <b id="numSaldo">—</b><span>créditos</span>
+    </button>
+    <button class="icono" onclick="abrirPanel('cuenta')" aria-label="Mi cuenta" title="Mi cuenta">
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <circle cx="12" cy="8" r="3.6"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/>
+      </svg>
+    </button>
+  </header>
+
+  <div class="banda-correo oculto" id="bandaCorreo">
+    <span>Verifica tu correo para poder chatear.</span>
+    <button type="button" onclick="reenviarVerificacion()" id="btnReenviar">Reenviar enlace</button>
+  </div>
+
+  <div id="hilo" role="log" aria-live="polite" aria-label="Conversación">
+    <div class="centro" id="lienzo">
+      <div class="bienvenida" id="bienvenida">
+        <h1>¿En qué andas pensando?</h1>
+        <p>Escribe abajo y empezamos. Cada respuesta descuenta solo los créditos que consume de verdad, así que las conversaciones largas gastan algo más.</p>
+        <div class="sugerencias">
+          <button class="sugerencia" onclick="usarSugerencia(this)">Explícame algo complicado en palabras simples</button>
+          <button class="sugerencia" onclick="usarSugerencia(this)">Ayúdame a redactar un mensaje difícil</button>
+          <button class="sugerencia" onclick="usarSugerencia(this)">Dame ideas para un proyecto que tengo en mente</button>
+          <button class="sugerencia" onclick="usarSugerencia(this)">Revisa este texto y dime qué mejorarías</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pie">
+    <div class="redactor">
+      <div class="caja">
+        <textarea id="entrada" rows="1" aria-label="Escribe tu mensaje" placeholder="Escribe tu mensaje…" oninput="ajustarAlto()" onkeydown="teclas(event)"></textarea>
+        <div class="controles">
+          <select class="modo" id="modo" aria-label="Modo de respuesta" title="Modelo a usar"></select>
+          <button class="enviar" id="btnEnviar" onclick="enviar()" aria-label="Enviar mensaje">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 19V5M5 12l7-7 7 7"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <p class="nota-pie" id="notaPie">Enter para enviar · Shift + Enter para salto de línea</p>
+    </div>
+  </div>
+</div>
+
+<div class="velo" id="velo" onclick="cerrarPanel()"></div>
+<aside class="panel" id="panel" role="dialog" aria-modal="true" aria-labelledby="tituloPanel">
+  <div class="panel-cabeza">
+    <h2 id="tituloPanel">Mi cuenta</h2>
+    <div class="empuje"></div>
+    <button class="icono" onclick="cerrarPanel()" aria-label="Cerrar">
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+        <path d="M6 6l12 12M18 6L6 18"/>
+      </svg>
+    </button>
+  </div>
+  <div class="panel-cuerpo" id="cuerpoPanel"></div>
+</aside>
+
+<script>
+(function () {
+  'use strict';
+
+  var token = localStorage.getItem('authToken');
+  var yo = null;
+  var modelos = [];
+  var paquetes = [];
+  var enviando = false;
+  var hayMensajes = false;
+  var tokenReset = null;
+
+  // Un intercambio típico ronda los 3,6 créditos en modo Rápido.
+  var CRED_POR_MSG = 3.6;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var num = function (n) { return Number(n || 0).toLocaleString('es-CO'); };
+
+  // ---------------- red ----------------
+
+  function api(ruta, opciones) {
+    var o = opciones || {};
+    var h = {};
+    if (o.body) h['Content-Type'] = 'application/json';
+    if (token) h['Authorization'] = 'Bearer ' + token;
+    return fetch(ruta, { method: o.method || 'GET', headers: h, body: o.body })
+      .then(function (res) {
+        return res.json().catch(function () { return null; })
+          .then(function (data) { return { res: res, data: data }; });
+      });
+  }
+
+  // ---------------- acceso ----------------
+
+  function mostrarAviso(texto, tipo) {
+    var a = $('avisoAcceso');
+    a.textContent = texto;
+    a.classList.toggle('ok', tipo === 'ok');
+    a.classList.remove('oculto');
+  }
+
+  function mostrarSolo(id) {
+    ['landing', 'acceso', 'app'].forEach(function (k) {
+      var el = $(k);
+      if (el) el.classList.toggle('oculto', k !== id);
+    });
+  }
+
+  var FORMS_ACCESO = { entrar: 'formEntrar', crear: 'formCrear', recuperar: 'formRecuperar', nueva: 'formNueva' };
+  var FOCO_ACCESO = { entrar: 'correoEntrar', crear: 'nombreCrear', recuperar: 'correoRecuperar', nueva: 'claveNueva' };
+
+  window.irAcceso = function (cual) {
+    mostrarSolo('acceso');
+    $('avisoAcceso').classList.add('oculto');
+    Object.keys(FORMS_ACCESO).forEach(function (k) {
+      $(FORMS_ACCESO[k]).classList.toggle('oculto', k !== cual);
+    });
+    var primero = $(FOCO_ACCESO[cual] || 'correoEntrar');
+    if (primero) primero.focus();
+  };
+
+  window.volverLanding = function () {
+    mostrarSolo('landing');
+  };
+
+  function pintarPreciosLanding() {
+    var cont = $('listaPrecios');
+    if (!cont) return;
+    if (!paquetes.length) { cont.textContent = 'No se pudieron cargar los precios.'; return; }
+    cont.innerHTML = paquetes.map(function (p) {
+      var msgs = Math.floor(p.creditos / CRED_POR_MSG);
+      var unidad = Math.round(p.precioCOP / p.creditos * 10) / 10;
+      var top = p.creditos === 3000;
+      return '' +
+        '<div class="plan' + (top ? ' destacado' : '') + '">' +
+          (top ? '<div class="cinta">Recomendado</div>' : '') +
+          '<h3>' + esc(p.nombre) + '</h3>' +
+          '<div class="valor">$' + num(p.precioCOP) + '</div>' +
+          '<div class="moneda">COP · pago único</div>' +
+          '<ul>' +
+            '<li>' + num(p.creditos) + ' créditos</li>' +
+            '<li>~' + num(msgs) + ' mensajes</li>' +
+            '<li>$' + unidad + ' por crédito</li>' +
+          '</ul>' +
+          '<button class="btn btn-borde" onclick="irAcceso(\'crear\')">Empezar gratis</button>' +
+        '</div>';
+    }).join('');
+  }
+
+  window.alternar = function () {
+    $('formEntrar').classList.toggle('oculto');
+    $('formCrear').classList.toggle('oculto');
+    $('avisoAcceso').classList.add('oculto');
+  };
+
+  function autenticado(data) {
+    token = data.token;
+    localStorage.setItem('authToken', token);
+    mostrarSolo('app');
+    cargarCuenta();
+    cargarPaquetes();
+    $('entrada').focus();
+  }
+
+  window.entrar = function (e) {
+    e.preventDefault();
+    var b = $('btnEntrar');
+    b.disabled = true; b.textContent = 'Entrando…';
+    api('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: $('correoEntrar').value.trim(),
+        password: $('claveEntrar').value
+      })
+    }).then(function (r) {
+      if (!r.res.ok) throw new Error((r.data && r.data.error) || 'No pudimos entrar');
+      autenticado(r.data);
+    }).catch(function (err) {
+      mostrarAviso(traducir(err.message));
+    }).then(function () {
+      b.disabled = false; b.textContent = 'Entrar';
+    });
+  };
+
+  window.crearCuenta = function (e) {
+    e.preventDefault();
+    var b = $('btnCrear');
+    b.disabled = true; b.textContent = 'Creando…';
+    api('/api/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: $('nombreCrear').value.trim(),
+        email: $('correoCrear').value.trim(),
+        password: $('claveCrear').value
+      })
+    }).then(function (r) {
+      if (!r.res.ok) throw new Error((r.data && r.data.error) || 'No pudimos crear la cuenta');
+      autenticado(r.data);
+    }).catch(function (err) {
+      mostrarAviso(traducir(err.message));
+    }).then(function () {
+      b.disabled = false; b.textContent = 'Crear cuenta';
+    });
+  };
+
+  function traducir(m) {
+    var t = String(m || '');
+    if (/User already exists/i.test(t)) return 'Ya existe una cuenta con ese correo.';
+    if (/Invalid credentials/i.test(t)) return 'El correo o la contraseña no coinciden.';
+    if (/Email and password required/i.test(t)) return 'Faltan el correo o la contraseña.';
+    if (/Demasiados registros/i.test(t)) return 'Demasiados registros desde aquí. Inténtalo más tarde.';
+    if (/Demasiados intentos/i.test(t)) return 'Demasiados intentos. Espera unos minutos.';
+    return t;
+  }
+
+  window.pedirRecuperacion = function (e) {
+    e.preventDefault();
+    var b = $('btnRecuperar');
+    b.disabled = true; b.textContent = 'Enviando…';
+    api('/api/olvide-password', {
+      method: 'POST',
+      body: JSON.stringify({ email: $('correoRecuperar').value.trim() })
+    }).then(function (r) {
+      irAcceso('entrar');
+      mostrarAviso((r.data && r.data.error) || (r.data && r.data.message) ||
+        'Si ese correo tiene una cuenta, te enviamos un enlace.', r.res.ok ? 'ok' : undefined);
+    }).catch(function () {
+      mostrarAviso('No pudimos procesar la solicitud. Inténtalo de nuevo.');
+    }).then(function () {
+      b.disabled = false; b.textContent = 'Enviar enlace';
+    });
+  };
+
+  window.guardarNuevaPassword = function (e) {
+    e.preventDefault();
+    var b = $('btnNueva');
+    b.disabled = true; b.textContent = 'Guardando…';
+    api('/api/resetear-password', {
+      method: 'POST',
+      body: JSON.stringify({ token: tokenReset, password: $('claveNueva').value })
+    }).then(function (r) {
+      if (!r.res.ok) throw new Error((r.data && r.data.error) || 'No pudimos actualizar la contraseña');
+      tokenReset = null;
+      irAcceso('entrar');
+      mostrarAviso('Contraseña actualizada. Ya puedes iniciar sesión.', 'ok');
+    }).catch(function (err) {
+      mostrarAviso(err.message);
+    }).then(function () {
+      b.disabled = false; b.textContent = 'Guardar contraseña';
+    });
+  };
+
+  window.reenviarVerificacion = function () {
+    var b = $('btnReenviar');
+    b.disabled = true;
+    var original = b.textContent;
+    b.textContent = 'Enviando…';
+    api('/api/reenviar-verificacion', { method: 'POST' }).then(function (r) {
+      var span = $('bandaCorreo').querySelector('span');
+      if (span) span.textContent = (r.data && (r.data.message || r.data.error)) || 'Listo.';
+    }).then(function () {
+      b.disabled = false; b.textContent = original;
+    });
+  };
+
+  window.salir = function () {
+    localStorage.removeItem('authToken');
+    location.reload();
+  };
+
+  // ---------------- estado ----------------
+
+  function pintarSaldo() {
+    var s = yo ? yo.creditBalance : 0;
+    $('numSaldo').textContent = num(s);
+    $('chipSaldo').classList.toggle('vacio', s <= 0);
+  }
+
+  function pintarVerificacion() {
+    var falta = !!(yo && yo.emailVerified === false);
+    $('bandaCorreo').classList.toggle('oculto', !falta);
+    if (falta) {
+      var span = $('bandaCorreo').querySelector('span');
+      if (span) span.textContent = 'Verifica tu correo para poder chatear.';
+    }
+  }
+
+  function cargarCuenta() {
+    return api('/api/stats').then(function (r) {
+      if (r.res.status === 401 || r.res.status === 403) return window.salir();
+      if (!r.res.ok) return;
+      yo = r.data;
+      modelos = r.data.modelos || [];
+      var sel = $('modo');
+      sel.innerHTML = modelos.map(function (m) {
+        var extra = m.multiplicador > 1 ? ' · ' + m.multiplicador + '×' : '';
+        return '<option value="' + m.clave + '">' + m.etiqueta + extra + '</option>';
+      }).join('');
+      pintarSaldo();
+      pintarVerificacion();
+    });
+  }
+
+  function cargarPaquetes() {
+    return api('/api/paquetes').then(function (r) {
+      if (r.res.ok && r.data) paquetes = r.data.paquetes || [];
+      pintarPreciosLanding();
+    });
+  }
+
+  // ---------------- conversación ----------------
+
+  function avisoPie(texto) {
+    var el = $('notaPie');
+    if (!el) return;
+    if (texto) {
+      el.textContent = texto;
+      el.style.color = 'var(--error)';
+    } else {
+      el.textContent = 'Enter para enviar · Shift + Enter para salto de línea';
+      el.style.color = '';
+    }
+  }
+
+  var bienvenidaHTML = null;
+
+  function reponerBienvenida() {
+    if (!bienvenidaHTML) return;
+    $('lienzo').innerHTML = bienvenidaHTML;
+    hayMensajes = false;
+  }
+
+  function limpiarBienvenida() {
+    if (hayMensajes) return;
+    var b = $('bienvenida');
+    if (b) { bienvenidaHTML = b.outerHTML; b.remove(); }
+    hayMensajes = true;
+  }
+
+  function turno(clase, quien, texto) {
+    limpiarBienvenida();
+    var d = document.createElement('div');
+    d.className = 'turno ' + clase;
+    var q = document.createElement('div');
+    q.className = 'quien';
+    q.textContent = quien;
+    var t = document.createElement('div');
+    t.className = 'texto';
+    if (texto !== null) t.textContent = texto;
+    d.appendChild(q); d.appendChild(t);
+    $('lienzo').appendChild(d);
+    abajo();
+    return { caja: d, texto: t };
+  }
+
+  function abajo() {
+    var h = $('hilo');
+    h.scrollTop = h.scrollHeight;
+  }
+
+  window.usarSugerencia = function (b) {
+    $('entrada').value = b.textContent.trim();
+    ajustarAlto();
+    $('entrada').focus();
+  };
+
+  window.ajustarAlto = function () {
+    var t = $('entrada');
+    t.style.height = 'auto';
+    t.style.height = Math.min(t.scrollHeight, 190) + 'px';
+    $('btnEnviar').disabled = enviando || !t.value.trim();
+  };
+
+  window.teclas = function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviar(); }
+  };
+
+  window.enviar = function () {
+    if (enviando) return;
+    var t = $('entrada');
+    var mensaje = t.value.trim();
+    if (!mensaje) return;
+
+    enviando = true;
+    t.value = ''; ajustarAlto();
+    avisoPie('');
+
+    var mio = turno('yo', 'Tú', mensaje);
+    var esperando = turno('ia', 'LunaticoIA', null);
+    esperando.texto.innerHTML = '<span class="escribiendo"><i></i><i></i><i></i></span>';
+
+    // Si el fetch revienta, la peticion nunca salio: devolvemos el texto al
+    // campo y quitamos los turnos, para que reintentar sea pulsar Enter.
+    var falloDeRed = false;
+
+    api('/api/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: mensaje, modelo: $('modo').value || undefined })
+    }).then(function (r) {
+      if (r.res.status === 402) {
+        esperando.texto.textContent = 'Te quedaste sin créditos. Compra un paquete para seguir conversando.';
+        if (yo) { yo.creditBalance = 0; pintarSaldo(); }
+        abrirPanel('paquetes');
+        return;
+      }
+      // El servidor respondio, aunque sea con error: la peticion SI llego, asi
+      // que el aviso se queda en el hilo en vez de tratarse como fallo de red.
+      if (!r.res.ok) {
+        esperando.texto.textContent =
+          (r.data && r.data.error) || 'No pudimos generar la respuesta. Inténtalo de nuevo.';
+        return;
+      }
+
+      esperando.texto.textContent = r.data.response;
+
+      var c = r.data.consumo;
+      if (c) {
+        var linea = document.createElement('div');
+        linea.className = 'consumo';
+        linea.textContent = c.creditosCobrados + ' créditos · ' + c.modelo +
+          ' · ' + c.tokensEntrada + ' entrada / ' + c.tokensSalida + ' salida';
+        esperando.caja.appendChild(linea);
+        if (yo) { yo.creditBalance = c.creditBalance; pintarSaldo(); }
+      }
+      abajo();
+    }).catch(function (err) {
+      falloDeRed = true;
+      mio.caja.remove();
+      esperando.caja.remove();
+      if (!hayMensajes || !$('lienzo').querySelector('.turno')) reponerBienvenida();
+      t.value = mensaje;
+      avisoPie('No se pudo enviar. Revisa tu conexión y vuelve a intentarlo.');
+    }).then(function () {
+      enviando = false;
+      t.focus();
+      ajustarAlto();
+    });
+  };
+
+  // ---------------- panel ----------------
+
+  var abridor = null;
+
+  function enfocables() {
+    return Array.prototype.filter.call(
+      $('panel').querySelectorAll('button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+      function (el) { return el.offsetParent !== null && !el.disabled; }
+    );
+  }
+
+  // Mientras el panel esta abierto, el resto queda fuera del alcance del
+  // teclado y de los lectores de pantalla. Sin esto, aria-modal es una promesa
+  // que no se cumple: tabulando te sales al fondo.
+  function fondoInerte(activar) {
+    ['app', 'landing'].forEach(function (id) {
+      var el = $(id);
+      if (!el) return;
+      if (activar) { el.setAttribute('inert', ''); el.setAttribute('aria-hidden', 'true'); }
+      else { el.removeAttribute('inert'); el.removeAttribute('aria-hidden'); }
+    });
+  }
+
+  window.abrirPanel = function (vista) {
+    abridor = document.activeElement;
+    $('tituloPanel').textContent = vista === 'paquetes' ? 'Paquetes de créditos' : 'Mi cuenta';
+    $('cuerpoPanel').innerHTML = vista === 'paquetes' ? vistaPaquetes() : vistaCuenta();
+    fondoInerte(true);
+    $('panel').classList.add('abierto');
+    $('velo').classList.add('abierto');
+    var f = enfocables();
+    if (f.length) f[0].focus();
+  };
+
+  window.cerrarPanel = function () {
+    if (!$('panel').classList.contains('abierto')) return;
+    $('panel').classList.remove('abierto');
+    $('velo').classList.remove('abierto');
+    fondoInerte(false);
+    if (abridor && abridor.focus) abridor.focus();
+    abridor = null;
+  };
+
+  $('panel').addEventListener('keydown', function (e) {
+    if (e.key !== 'Tab') return;
+    var f = enfocables();
+    if (!f.length) return;
+    var primero = f[0], ultimo = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === primero) { e.preventDefault(); ultimo.focus(); }
+    else if (!e.shiftKey && document.activeElement === ultimo) { e.preventDefault(); primero.focus(); }
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') cerrarPanel();
+  });
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function vistaCuenta() {
+    if (!yo) return '<p class="nota">Cargando…</p>';
+    var msgs = Math.floor((yo.creditBalance || 0) / CRED_POR_MSG);
+    return '' +
+      '<div class="bloque">' +
+        '<h3>Saldo</h3>' +
+        '<div class="dato"><span>Créditos disponibles</span><b class="num">' + num(yo.creditBalance) + '</b></div>' +
+        '<div class="dato"><span>Mensajes aproximados</span><b class="num">~' + msgs + '</b></div>' +
+      '</div>' +
+      '<div class="bloque">' +
+        '<h3>Datos</h3>' +
+        '<div class="dato"><span>Nombre</span><b>' + esc(yo.name || '—') + '</b></div>' +
+        '<div class="dato"><span>Correo</span><b>' + esc(yo.email) + '</b></div>' +
+      '</div>' +
+      '<div class="bloque">' +
+        '<h3>Cómo se cobra</h3>' +
+        '<p class="nota">Cada respuesta descuenta según los tokens que consume de verdad, no por mensaje. ' +
+        'Los modos Equilibrado y Avanzado usan modelos más potentes y gastan 3× y 5× respectivamente.</p>' +
+      '</div>' +
+      '<button class="btn btn-borde" style="width:100%" onclick="salir()">Cerrar sesión</button>';
+  }
+
+  function vistaPaquetes() {
+    if (!paquetes.length) return '<p class="nota">No se pudieron cargar los paquetes.</p>';
+    var mayor = Math.max.apply(null, paquetes.map(function (p) { return p.creditos; }));
+    var html = '<div class="bloque">' +
+      '<div class="dato" style="padding-top:0"><span>Tu saldo</span><b class="num">' +
+      num(yo ? yo.creditBalance : 0) + '</b></div></div>';
+
+    html += paquetes.map(function (p) {
+      var msgs = Math.floor(p.creditos / CRED_POR_MSG);
+      var unidad = Math.round(p.precioCOP / p.creditos * 10) / 10;
+      var destacado = p.creditos === 3000;
+      return '' +
+        '<div class="paquete' + (destacado ? ' destacado' : '') + '">' +
+          '<div class="info">' +
+            '<div class="nombre">' + esc(p.nombre) +
+              (destacado ? '<span class="etiqueta">Recomendado</span>' : '') +
+            '</div>' +
+            '<div class="detalle">' + num(p.creditos) + ' créditos · ~' + num(msgs) + ' mensajes · $' + unidad + ' c/u</div>' +
+          '</div>' +
+          '<div class="precio">$' + num(p.precioCOP) + '<small>COP</small></div>' +
+          '<button class="btn btn-luna" style="width:auto" onclick="comprar(\'' + p.clave + '\')">Comprar</button>' +
+        '</div>';
+    }).join('');
+
+    html += '<p class="nota" style="margin-top:16px">Pago único, sin suscripción. Los créditos no caducan. ' +
+      'Puedes pagar con tarjeta, PSE o Nequi.</p>' +
+      '<div id="avisoCompra"></div>';
+    return html;
+  }
+
+  window.comprar = function (clave) {
+    var aviso = $('avisoCompra');
+    if (aviso) aviso.innerHTML = '<p class="nota" style="margin-top:12px">Abriendo el pago…</p>';
+
+    api('/api/comprar', { method: 'POST', body: JSON.stringify({ paquete: clave }) })
+      .then(function (r) {
+        if (r.res.status === 503) {
+          if (aviso) aviso.innerHTML = '<p class="nota" style="margin-top:12px">' +
+            'Los pagos todavía no están activos. Estamos terminando de configurarlos.</p>';
+          return;
+        }
+        if (!r.res.ok) throw new Error((r.data && r.data.error) || 'No se pudo iniciar el pago');
+
+        var d = r.data;
+        var form = document.createElement('form');
+        form.method = 'GET';
+        form.action = 'https://checkout.wompi.co/p/';
+        var campos = {
+          'public-key': d.publicKey,
+          'currency': d.moneda,
+          'amount-in-cents': d.montoEnCentavos,
+          'reference': d.referencia,
+          'signature:integrity': d.firmaIntegridad,
+          'redirect-url': location.origin + '/?compra=' + encodeURIComponent(d.referencia)
+        };
+        Object.keys(campos).forEach(function (k) {
+          var i = document.createElement('input');
+          i.type = 'hidden'; i.name = k; i.value = campos[k];
+          form.appendChild(i);
+        });
+        document.body.appendChild(form);
+        form.submit();
+      })
+      .catch(function (err) {
+        if (aviso) aviso.innerHTML = '<p class="nota" style="margin-top:12px">' + esc(err.message) + '</p>';
+      });
+  };
+
+  // ---------------- arranque ----------------
+
+  $('btnEnviar').disabled = true;
+
+  var parametrosURL = new URLSearchParams(location.search);
+  var resetToken = parametrosURL.get('reset');
+  var verificacion = parametrosURL.get('verificacion');
+
+  if (resetToken || verificacion) history.replaceState(null, '', location.pathname);
+
+  if (resetToken) {
+    // Enlace de "olvidé mi contraseña": manda a elegir una nueva sin
+    // importar si este navegador tiene o no una sesión activa.
+    tokenReset = resetToken;
+    mostrarSolo('acceso');
+    irAcceso('nueva');
+    cargarPaquetes();
+  } else if (token) {
+    mostrarSolo('app');
+    cargarCuenta();
+    cargarPaquetes();
+  } else {
+    mostrarSolo('landing');
+    cargarPaquetes();
+    if (verificacion) {
+      // Enlace de verificación de correo abierto sin sesión activa (el caso
+      // normal: se abre desde el correo, en el navegador que sea).
+      var MENSAJES_VERIFICACION = {
+        ok: ['Correo verificado. Ya puedes iniciar sesión.', 'ok'],
+        invalida: ['El enlace de verificación no es válido o ya venció.', undefined],
+        error: ['Algo salió mal verificando tu correo. Inténtalo de nuevo.', undefined]
+      };
+      var m = MENSAJES_VERIFICACION[verificacion] || MENSAJES_VERIFICACION.error;
+      irAcceso('entrar');
+      mostrarAviso(m[0], m[1]);
+    }
+  }
+
+  // Si cierras sesion o entras con otra cuenta en otra pestana, esta se entera.
+  window.addEventListener('storage', function (e) {
+    if (e.key !== 'authToken') return;
+    if (e.newValue !== token) location.reload();
+  });
+
+  // Al volver a esta pestana, refrescar el saldo: puede que hayas comprado
+  // creditos en otra, o gastado desde el movil.
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && token && !$('app').classList.contains('oculto')) {
+      cargarCuenta();
+    }
+  });
+
+  // Al enfocar el redactor en movil, asegurarse de que queda a la vista.
+  $('entrada').addEventListener('focus', function () {
+    if (!window.matchMedia('(pointer: coarse)').matches) return;
+    setTimeout(function () {
+      $('entrada').scrollIntoView({ block: 'nearest' });
+    }, 300);
+  });
+
+  // Al volver del checkout, el webhook ya habrá abonado los créditos.
+  if (new URLSearchParams(location.search).get('compra') && token) {
+    setTimeout(function () {
+      cargarCuenta().then(function () { abrirPanel('cuenta'); });
+    }, 1800);
+  }
+})();
+</script>
+</body>
+</html>
