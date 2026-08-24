@@ -1011,10 +1011,19 @@
   // .scale, recalculado en cada resize segun el alto visible de la camara.
   // Asi la luna siempre cabe en el encuadre sin recortarse, sea cual sea
   // el aspecto del contenedor (movil angosto o escritorio ancho).
-  var esfera = new THREE.Mesh(
-    new THREE.SphereGeometry(1, 64, 64),
-    new THREE.MeshStandardMaterial({ map: generarTextura(), roughness: 0.92, metalness: 0.05 })
+  // Textura real de la Luna (fotografia de la NASA), de los assets propios
+  // de Three.js. Color en blanco para que se vea el tono autentico de la
+  // superficie y no un tinte dorado encima. Si por lo que sea no carga
+  // (CDN caido, sin red), cae a la textura generada por codigo de mas
+  // arriba en vez de quedar en negro.
+  var materialLuna = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.96, metalness: 0.02 });
+  new THREE.TextureLoader().load(
+    'https://threejs.org/examples/textures/planets/moon_1024.jpg',
+    function (textura) { materialLuna.map = textura; materialLuna.needsUpdate = true; },
+    undefined,
+    function () { materialLuna.map = generarTextura(); materialLuna.color.set(0xE8C88A); materialLuna.needsUpdate = true; }
   );
+  var esfera = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 64), materialLuna);
   escena.add(esfera);
 
   // Halo tipo atmosfera: esfera un poco mas grande, cara interna, aditivo.
@@ -1027,11 +1036,11 @@
   );
   escena.add(halo);
 
-  escena.add(new THREE.AmbientLight(0x3a3348, 1.1));
-  var luzPrincipal = new THREE.DirectionalLight(0xF2D9A6, 2.1);
+  escena.add(new THREE.AmbientLight(0x3a3348, 0.9));
+  var luzPrincipal = new THREE.DirectionalLight(0xFFF6E8, 2.3);
   luzPrincipal.position.set(-3, 2.4, 3.4);
   escena.add(luzPrincipal);
-  var luzTenue = new THREE.PointLight(0x6078C8, 0.5);
+  var luzTenue = new THREE.PointLight(0x6078C8, 0.4);
   luzTenue.position.set(3, -1.5, -2);
   escena.add(luzTenue);
 
