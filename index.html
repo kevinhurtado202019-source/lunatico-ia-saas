@@ -96,10 +96,15 @@
     font-family: var(--display);
     font-weight: 700;
     letter-spacing: -.02em;
-    display: inline-flex; align-items: center; gap: 9px;
+    display: inline-flex; align-items: center; gap: 3px;
   }
   .marca svg { width: 1em; height: 1em; flex: none; }
-  .marca img { width: 2.2em; height: 2.2em; flex: none; object-fit: contain; margin: -.3em 0; }
+  .marca img {
+    width: 2.7em; height: 2.7em; flex: none; object-fit: contain; margin: -.35em -.05em;
+    animation: marca-girar 7s linear infinite;
+  }
+  @keyframes marca-girar { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .marca img { animation: none; } }
 
 
   /* ===================== LANDING ===================== */
