@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>LunaticoIA</title>
 <meta name="description" content="Conversa con IA. Compra créditos, sin suscripción.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230B0E17'/%3E%3Cpath d='M12 8v11a5 5 0 0 0 5 5h6' stroke='%237F56D9' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230B0E17'/%3E%3Cpath d='M12 8v11a5 5 0 0 0 5 5h6' stroke='%232DD4BF' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Public+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
@@ -20,9 +20,9 @@
     --texto:        #E9EBF3;
     --suave:        #A7B0C6;
     --tenue:        #8C97AE;   /* 4.74 minimo sobre los fondos usados (AA) */
-    --luna:         #7F56D9;   /* morado de Nequi (rgb(127,86,217), tomado de su sitio real) */
-    --luna-viva:    #A78BFA;   /* mas claro: 5.9 de contraste sobre --noche, para texto chico */
-    --luna-fondo:   #241B3D;
+    --luna:         #2DD4BF;   /* azul aguamarina */
+    --luna-viva:    #5EEAD4;
+    --luna-fondo:   #0F2E2A;
     --ok:           #6BC79A;
     --alerta:       #E3A863;
     --error:        #EC8A80;
@@ -57,7 +57,7 @@
     content: "";
     position: fixed; inset: 0; pointer-events: none; z-index: 0;
     background:
-      radial-gradient(60rem 40rem at 78% -12%, rgba(127,86,217,.06), transparent 62%),
+      radial-gradient(60rem 40rem at 78% -12%, rgba(45,212,191,.06), transparent 62%),
       radial-gradient(50rem 36rem at 8% 108%, rgba(96,120,200,.06), transparent 60%);
   }
 
@@ -124,7 +124,7 @@
   .btn-texto:hover { color: var(--texto); background: var(--alta); }
 
   /* Mas especifico que .btn-luna, que se define despues y traeria width:100% */
-  .btn.btn-luna-auto { background: var(--luna); color: #F7F5FC; width: auto; }
+  .btn.btn-luna-auto { background: var(--luna); color: #06231F; width: auto; }
 
   .hero {
     position: relative; overflow: hidden;
@@ -203,6 +203,7 @@
     letter-spacing: -.028em; margin: 0 0 20px; text-wrap: balance;
   }
   .hero h1 em { font-style: normal; color: var(--luna); }
+  .hero h1 .punto-nequi { color: var(--error); }
   .hero .bajada {
     font-size: clamp(17px, 2.4vw, 20px); color: var(--suave);
     max-width: 40ch; margin: 0 auto 34px; text-wrap: balance;
@@ -273,7 +274,7 @@
     transition: border-color .15s, transform .15s;
   }
   .plan:hover { border-color: var(--borde); transform: translateY(-2px); }
-  .plan.destacado { border-color: rgba(127,86,217,.45); background: var(--alta); }
+  .plan.destacado { border-color: rgba(45,212,191,.45); background: var(--alta); }
   .plan .cinta {
     font-family: var(--ui); font-size: 10px; font-weight: 600;
     letter-spacing: .09em; text-transform: uppercase;
@@ -377,7 +378,7 @@
   }
   .btn:hover { filter: brightness(1.08); }
   .btn:disabled { opacity: .5; cursor: not-allowed; filter: none; }
-  .btn-luna { background: var(--luna); color: #F7F5FC; width: 100%; }
+  .btn-luna { background: var(--luna); color: #06231F; width: 100%; }
   .btn-borde {
     background: transparent; border: 1px solid var(--borde); color: var(--texto);
   }
@@ -580,7 +581,7 @@
 
   .enviar {
     margin-left: auto; width: 36px; height: 36px; border-radius: 10px;
-    background: var(--luna); color: #F7F5FC;
+    background: var(--luna); color: #06231F;
     display: grid; place-items: center;
     transition: opacity .15s, filter .15s;
   }
@@ -653,7 +654,7 @@
     transition: border-color .15s;
   }
   .paquete:hover { border-color: var(--borde); }
-  .paquete.destacado { border-color: rgba(127,86,217,.45); background: var(--mas-alta); }
+  .paquete.destacado { border-color: rgba(45,212,191,.45); background: var(--mas-alta); }
 
   .paquete .info { flex: 1; min-width: 0; }
   .paquete .nombre {
@@ -728,7 +729,7 @@
 
     <header class="hero">
       <div class="hero-contenido">
-        <h1>IA sin suscripción,<br>y pagas con <em>Nequi</em>.</h1>
+        <h1>IA sin suscripción,<br>y pagas con <em>Nequi</em><span class="punto-nequi">.</span></h1>
         <p class="bajada">
           Compra créditos cuando los necesites. No caducan, nadie te cobra el mes
           siguiente, y no hace falta tarjeta internacional.
