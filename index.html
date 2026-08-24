@@ -570,6 +570,10 @@
   .turno.ia .texto h2 { font-size: 1.14em; }
   .turno.ia .texto h3 { font-size: 1.04em; }
 
+  .turno.ia .texto img.emoji {
+    height: 1.2em; width: 1.2em; vertical-align: -.22em; margin: 0 .03em;
+  }
+
   .consumo {
     margin-top: 9px; font-family: var(--mono); font-size: 11.5px;
     color: var(--tenue); font-variant-numeric: tabular-nums;
@@ -1040,6 +1044,10 @@
 </aside>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- Dibuja los emojis que use el modelo con un set ilustrado (Twemoji) en vez
+     del emoji plano del sistema operativo. Si el CDN falla, se queda el
+     emoji nativo tal cual: nunca un hueco vacio. -->
+<script src="https://cdn.jsdelivr.net/npm/twemoji@14.0.2/dist/twemoji.min.js" crossorigin="anonymous"></script>
 <script>
 // Fondo cosmico del hero con WebGL real: estrellas + luna con iluminacion
 // de verdad. Si el CDN de Three.js falla o el navegador no soporta WebGL,
@@ -1731,6 +1739,19 @@
     return clon.outerHTML;
   }
 
+  // El emoji del sistema operativo se ve distinto (y a veces bastante plano)
+  // segun el equipo de quien lo lea; Twemoji lo dibuja siempre igual, con un
+  // set ilustrado a color. Si el CDN no cargo, se queda el emoji nativo tal
+  // cual: nunca un hueco vacio.
+  function pintarEmoji(el) {
+    if (window.twemoji) {
+      twemoji.parse(el, {
+        folder: 'svg', ext: '.svg',
+        base: 'https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/'
+      });
+    }
+  }
+
   window.enviar = function () {
     if (enviando) return;
     var t = $('entrada');
@@ -1769,6 +1790,7 @@
       }
 
       esperando.texto.innerHTML = renderizarMarkdown(r.data.response);
+      pintarEmoji(esperando.texto);
 
       var c = r.data.consumo;
       if (c) {
