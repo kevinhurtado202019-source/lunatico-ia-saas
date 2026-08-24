@@ -1804,10 +1804,17 @@
       if (c) {
         var linea = document.createElement('div');
         linea.className = 'consumo';
-        linea.textContent = c.creditosCobrados + ' créditos · ' + c.modelo +
+        var texto = c.creditosCobrados + ' créditos · ' + c.modelo +
           ' · ' + c.tokensEntrada + ' entrada / ' + c.tokensSalida + ' salida';
+        if (c.busquedas) texto += ' · ' + c.busquedas + ' búsqueda' + (c.busquedas > 1 ? 's' : '') + ' web';
+        if (c.lecturasWeb) texto += ' · ' + c.lecturasWeb + ' página' + (c.lecturasWeb > 1 ? 's' : '') + ' leída' + (c.lecturasWeb > 1 ? 's' : '');
+        linea.textContent = texto;
         esperando.caja.appendChild(linea);
-        if (yo) { yo.creditBalance = c.creditBalance; pintarSaldo(); }
+        if (yo) {
+          yo.creditBalance = c.creditBalance;
+          if (c.creditosIlimitados) yo.creditosIlimitados = true;
+          pintarSaldo();
+        }
       }
       abajo();
     }).catch(function (err) {
@@ -1911,6 +1918,9 @@
           return 'Los modos más potentes gastan más créditos: ' + potentes.join(', ') + '.';
         })() +
         '</p>' +
+        '<p class="nota">LunaticoIA puede buscar en internet, abrir páginas web y ' +
+        'correr código cuando lo necesita. Abrir páginas y correr código no cuesta ' +
+        'extra; cada búsqueda web suma ' + (yo.creditosPorBusqueda || 0) + ' créditos aparte de los tokens.</p>' +
       '</div>' +
       '<button class="btn btn-borde" style="width:100%" onclick="salir()">Cerrar sesión</button>';
   }

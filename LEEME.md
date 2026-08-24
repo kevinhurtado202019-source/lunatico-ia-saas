@@ -90,6 +90,31 @@ vienen usándolo; si se ajusta algún día, que sea a propósito y no de paso.
 El cobro ocurre **después** de una respuesta correcta. Si la API falla, no se
 descuenta saldo.
 
+### Herramientas de la IA
+
+Cada respuesta se pide a Claude con tres herramientas activas (`HERRAMIENTAS_IA`
+en `server-saas.js`), todas ejecutadas del lado de Anthropic — este servidor
+nunca abre una URL ni corre código:
+
+- `web_search` (`web_search_20250305`) — busca en internet. Cuesta **10
+  créditos por búsqueda**, aparte de los tokens ($10 cada 1.000 búsquedas es
+  el precio real de Anthropic).
+- `web_fetch` (`web_fetch_20250910`) — abre y lee el contenido de una URL
+  puntual. Solo puede abrir URLs que ya aparecieron antes en la conversación
+  (las escribió el usuario o las trajo una búsqueda), nunca una que Claude
+  invente. No cobra nada aparte de los tokens que consume el contenido leído.
+- `code_execution` (`code_execution_20250825`) — corre Python/Bash en un
+  sandbox de Anthropic sin acceso a internet. No cobra nada aparte de los
+  tokens salvo que se agote el cupo mensual de horas gratis de la
+  organización (1.550 horas, muy por encima de lo que un chat como este va a
+  usar).
+
+Como la respuesta ahora puede traer varios bloques de texto intercalados con
+los de búsqueda/lectura/código (p.ej. "voy a buscar…" + resultados + la
+respuesta final), `/api/chat` los junta todos — quedarse solo con el primero
+(como hacía antes) cortaría la respuesta a la mitad. `MAX_TOKENS_RESPUESTA`
+también subió de 1.024 a 4.096 por la misma razón.
+
 ---
 
 ## Endpoints

@@ -48,6 +48,23 @@ const claudeClient = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY });
 const TOKENS_POR_CREDITO = 1000;
 const PESO_SALIDA = 5;
 
+// Herramientas que la IA puede usar en cada respuesta: buscar en internet y
+// abrir/leer paginas web, y correr codigo (Python/Bash) en un sandbox propio
+// de Anthropic. Ambas las ejecuta la API del lado de Anthropic; nunca abren
+// ni corren nada en este servidor.
+const HERRAMIENTAS_IA = [
+    { type: 'web_search_20250305', name: 'web_search', max_uses: 5 },
+    { type: 'web_fetch_20250910', name: 'web_fetch', max_uses: 5 },
+    { type: 'code_execution_20250825', name: 'code_execution' }
+];
+
+// Solo la busqueda tiene costo aparte de los tokens ($10 cada 1.000 = $0,01,
+// -> 10 creditos al tipo de cambio de Rapido). Leer una pagina (web_fetch) y
+// correr codigo salen gratis -- code_execution tiene su propio cupo mensual
+// de horas de Anthropic, muy por encima de lo que un chat como este va a
+// usar, y web_fetch no cobra nada aparte de los tokens que consume.
+const CREDITOS_POR_BUSQUEDA = 10;
+
 // Multiplicadores = precio de entrada de cada modelo dividido entre el de
 // Rápido (Haiku, $1/MTok): Sonnet $2, Opus $5, Fable $10 -> 1 : 2(*) : 5 : 10.
 // (*) Equilibrado quedó en 3x desde antes de que Sonnet bajara de precio; no
@@ -61,7 +78,10 @@ const MODELOS = {
 const MODELO_POR_DEFECTO = 'rapido';
 
 const CREDITOS_DE_BIENVENIDA = 100;
-const MAX_TOKENS_RESPUESTA = 1024;
+// Un poco mas alto que antes (1024): con herramientas de por medio, una
+// respuesta que busca/lee/corre codigo y despues sintetiza necesita mas
+// espacio de salida para no cortarse a mitad de camino.
+const MAX_TOKENS_RESPUESTA = 4096;
 const MENSAJES_DE_HISTORIAL = 10;
 
 const PAQUETES = {
@@ -83,7 +103,8 @@ function creditosDe(usage, multiplicador) {
     const entrada = (usage && usage.input_tokens) || 0;
     const salida  = (usage && usage.output_tokens) || 0;
     const facturables = entrada + PESO_SALIDA * salida;
-    return Math.ceil((facturables / TOKENS_POR_CREDITO) * multiplicador);
+    const busquedas = (usage && usage.server_tool_use && usage.server_tool_use.web_search_requests) || 0;
+    return Math.ceil((facturables / TOKENS_POR_CREDITO) * multiplicador) + busquedas * CREDITOS_POR_BUSQUEDA;
 }
 
 // Los usuarios creados antes del modelo de créditos no tienen saldo. En vez de
@@ -462,6 +483,7 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
             name: user.name || user.email.split('@')[0],
             creditBalance: user.creditBalance,
             creditosIlimitados: user.creditosIlimitados === true,
+            creditosPorBusqueda: CREDITOS_POR_BUSQUEDA,
             emailVerified: user.emailVerified,
             correoConfigurado: CORREO_CONFIGURADO,
             modelos: Object.keys(MODELOS).map((k) => ({
@@ -660,13 +682,20 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         const response = await claudeClient.messages.create({
             model: modelo.id,
             max_tokens: MAX_TOKENS_RESPUESTA,
-            messages: messagesForClaude
+            messages: messagesForClaude,
+            tools: HERRAMIENTAS_IA
         });
 
+        // Con herramientas de por medio la respuesta trae varios bloques de
+        // texto intercalados con los de busqueda/lectura/codigo (p.ej. "voy a
+        // buscar..." + resultados + la respuesta final): hay que juntarlos
+        // todos, no solo quedarse con el primero.
         let aiMessage = '';
         if (response.content && Array.isArray(response.content)) {
-            const textContent = response.content.find((i) => i.type === 'text');
-            if (textContent && textContent.text) aiMessage = textContent.text;
+            aiMessage = response.content
+                .filter((i) => i.type === 'text')
+                .map((i) => i.text)
+                .join('');
         }
         if (!aiMessage) throw new Error('Invalid response from Claude API');
 
@@ -689,12 +718,15 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             await users.updateOne({ _id: userId }, { $set: { creditBalance: nuevoSaldo } });
         }
 
+        const uso = response.usage || {};
         res.json({
             response: aiMessage,
             consumo: {
                 modelo: modelo.etiqueta,
-                tokensEntrada: response.usage ? response.usage.input_tokens : null,
-                tokensSalida: response.usage ? response.usage.output_tokens : null,
+                tokensEntrada: uso.input_tokens != null ? uso.input_tokens : null,
+                tokensSalida: uso.output_tokens != null ? uso.output_tokens : null,
+                busquedas: (uso.server_tool_use && uso.server_tool_use.web_search_requests) || 0,
+                lecturasWeb: (uso.server_tool_use && uso.server_tool_use.web_fetch_requests) || 0,
                 creditosCobrados: cobro,
                 creditBalance: nuevoSaldo,
                 creditosIlimitados: ilimitado
