@@ -112,8 +112,27 @@ nunca abre una URL ni corre código:
 Como la respuesta ahora puede traer varios bloques de texto intercalados con
 los de búsqueda/lectura/código (p.ej. "voy a buscar…" + resultados + la
 respuesta final), `/api/chat` los junta todos — quedarse solo con el primero
-(como hacía antes) cortaría la respuesta a la mitad. `MAX_TOKENS_RESPUESTA`
-también subió de 1.024 a 4.096 por la misma razón.
+(como hacía antes) cortaría la respuesta a la mitad.
+
+### Respuestas cortadas (`stop_reason`)
+
+`MAX_TOKENS_RESPUESTA` subió de 1.024 a 4.096 (por lo del punto anterior) y
+después a **16.384**, tras un caso real: pidiendo crear una página completa
+con `code_execution`, la respuesta se cortó justo en 4.096 tokens de salida
+a mitad de la generación — el usuario veía "¡Aquí voy!" y después nada, sin
+ninguna pista de si seguía trabajando o se había quedado pegada.
+
+Ahora `/api/chat` revisa `response.stop_reason`: si es `max_tokens` (se
+acabó el espacio) o `pause_turn` (Anthropic pausó una búsqueda/ejecución
+larga a mitad de camino), se le agrega al final de la respuesta un aviso
+explícito («⚠️ La respuesta se cortó… Escribe "continúa"…») en vez de
+dejarla a medias en silencio. `consumo.cortada` también viaja al frontend
+como booleano por si en algún momento conviene destacarlo visualmente.
+Ojo: como el historial se reconstruye como texto plano (ver más abajo, "Las
+imágenes no quedan en el historial"), un "continúa" no retoma la tarea
+pausada tal cual la dejó Anthropic — el modelo simplemente la vuelve a
+intentar con el contexto de texto que tiene, que en la práctica funciona
+bien casi siempre.
 
 ### Imágenes adjuntas
 

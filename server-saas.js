@@ -88,10 +88,12 @@ const MODELOS = {
 const MODELO_POR_DEFECTO = 'rapido';
 
 const CREDITOS_DE_BIENVENIDA = 100;
-// Un poco mas alto que antes (1024): con herramientas de por medio, una
-// respuesta que busca/lee/corre codigo y despues sintetiza necesita mas
-// espacio de salida para no cortarse a mitad de camino.
-const MAX_TOKENS_RESPUESTA = 4096;
+// Con herramientas de por medio (sobre todo code_execution generando codigo
+// largo, como una pagina web completa) una respuesta puede necesitar mucho
+// mas espacio de salida del que parece. En 4096 se estaba cortando a mitad
+// de camino sin avisar -- el usuario veia "aqui voy..." y despues nada, sin
+// forma de saber si seguia trabajando o se habia quedado pegado.
+const MAX_TOKENS_RESPUESTA = 16384;
 const MENSAJES_DE_HISTORIAL = 10;
 
 const PAQUETES = {
@@ -735,6 +737,19 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         }
         if (!aiMessage) throw new Error('Invalid response from Claude API');
 
+        // Si la respuesta se corto (llego al limite de tokens, o Anthropic la
+        // pauso a mitad de una busqueda/ejecucion de codigo larga) el usuario
+        // se quedaba viendo un mensaje a medias sin ninguna pista de que
+        // paso -- como si la IA se hubiera quedado pegada. Se avisa explicito.
+        const cortada = response.stop_reason === 'max_tokens' || response.stop_reason === 'pause_turn';
+        if (cortada) {
+            aiMessage += (aiMessage ? '\n\n' : '') + '⚠️ *La respuesta se cortó antes de terminar' +
+                (response.stop_reason === 'max_tokens'
+                    ? ' (llegó al límite de longitud)'
+                    : ' (una búsqueda o ejecución de código larga quedó a medias)') +
+                '. Escribe "continúa" para que siga.*';
+        }
+
         // Se cobra DESPUÉS de una respuesta correcta: si la API falla, el
         // usuario no pierde saldo. Las cuentas con creditosIlimitados nunca
         // bajan de saldo (pensadas para el propio creador de LunaticoIA).
@@ -772,7 +787,8 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
                 lecturasWeb: (uso.server_tool_use && uso.server_tool_use.web_fetch_requests) || 0,
                 creditosCobrados: cobro,
                 creditBalance: nuevoSaldo,
-                creditosIlimitados: ilimitado
+                creditosIlimitados: ilimitado,
+                cortada: cortada
             }
         });
     } catch (error) {
