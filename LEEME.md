@@ -114,6 +114,24 @@ los de búsqueda/lectura/código (p.ej. "voy a buscar…" + resultados + la
 respuesta final), `/api/chat` los junta todos — quedarse solo con el primero
 (como hacía antes) cortaría la respuesta a la mitad.
 
+### El modelo confundía su sandbox con el computador del usuario
+
+Caso real: alguien le pidió una página web, la IA la "creó" con
+`code_execution` y afirmó con total seguridad que ya la había exportado a la
+carpeta de Descargas del usuario ("¡PERFECTO! ✅ Ahora deberías ver el
+archivo... en tus Descargas"). No había nada ahí, por supuesto: el sandbox de
+`code_execution` es un contenedor aislado de Anthropic sin ningún acceso al
+dispositivo de quien escribe — nada de lo que el modelo guarde ahí puede
+llegar jamás a la computadora de nadie.
+
+`/api/chat` no tenía ningún `system` prompt, así que el modelo no tenía forma
+de saber esto y lo inventó con confianza. Ahora manda `SYSTEM_PROMPT` (en
+`server-saas.js`) explicando la separación entre el sandbox y el dispositivo
+del usuario, y dejando claro que la única forma de "entregar" un archivo es
+escribiendo su contenido completo en la respuesta (en un bloque de código)
+para que la persona lo copie y lo guarde ella misma — nunca afirmar haberlo
+guardado, exportado o descargado en su equipo.
+
 ### Respuestas cortadas (`stop_reason`)
 
 `MAX_TOKENS_RESPUESTA` subió de 1.024 a 4.096 (por lo del punto anterior) y

@@ -51,6 +51,37 @@ const claudeClient = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY });
 const TOKENS_POR_CREDITO = 1000;
 const PESO_SALIDA = 5;
 
+// Sin esto el modelo confunde su sandbox de code_execution con el computador
+// de quien le escribe: llega a decir "ya lo exporté a tus Descargas" cuando
+// eso es imposible (el sandbox no tiene ningun acceso al dispositivo de la
+// persona). Caso real que motivo este mensaje: el usuario pidio una pagina
+// web, la IA "la guardo" en el sandbox y aseguro que ya estaba en la carpeta
+// de Descargas del usuario -- no habia nada ahi, por supuesto.
+const SYSTEM_PROMPT = [
+    'Eres LunaticoIA, un asistente conversacional.',
+    '',
+    'Sobre la herramienta code_execution: corre en un sandbox aislado de ' +
+        'Anthropic, sin conexion a internet y SIN NINGUN ACCESO al ' +
+        'computador de la persona que te escribe. Nada de lo que escribas o ' +
+        'guardes ahi (archivos, carpetas, "exportaciones") llega jamas a su ' +
+        'computador: no a su carpeta de Descargas, no a su escritorio, a ' +
+        'ningun lado. Es un error grave decir que "ya lo exporte a tus ' +
+        'Descargas" o que "ya deberias verlo" -- eso es falso siempre, ' +
+        'porque no existe ningun puente entre ese sandbox y el dispositivo ' +
+        'de la persona.',
+    '',
+    'Si la persona pide un archivo para usar en su propio computador (por ' +
+        'ejemplo una pagina HTML, un script, un documento), la unica forma ' +
+        'de dárselo es escribiendo el contenido completo directamente en tu ' +
+        'respuesta (en un bloque de codigo), para que ella misma lo copie y ' +
+        'lo guarde. Nunca afirmes haber guardado, exportado o descargado ' +
+        'algo en su equipo.',
+    '',
+    'En general: no inventes que hiciste algo en el dispositivo de la ' +
+        'persona si no es cierto. Si no estas segura de si algo funciono, ' +
+        'dilo con esa incertidumbre en vez de afirmarlo con seguridad.'
+].join('\n');
+
 // Herramientas que la IA puede usar en cada respuesta: buscar en internet y
 // abrir/leer paginas web, y correr codigo (Python/Bash) en un sandbox propio
 // de Anthropic. Ambas las ejecuta la API del lado de Anthropic; nunca abren
@@ -720,6 +751,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         const response = await claudeClient.messages.create({
             model: modelo.id,
             max_tokens: MAX_TOKENS_RESPUESTA,
+            system: SYSTEM_PROMPT,
             messages: messagesForClaude,
             tools: HERRAMIENTAS_IA
         });
