@@ -1,6 +1,6 @@
 # LunaticoIA
 
-Backend y frontend de la plataforma. Estado al 23 de agosto de 2026.
+Backend y frontend de la plataforma. Estado al 25 de agosto de 2026.
 
 ---
 
@@ -614,12 +614,21 @@ va a pagar.
 
 ## Lo que falta
 
-1. Que Wompi cambie el nombre del comercio a **LunaticoIA** (quedó
-   «interrapidisimo» por error).
-2. Averiguar por qué rechazaron la cuenta bancaria de payouts. Puede ser el
-   mismo problema que el del nombre del comercio.
-3. Poner las tres llaves de Wompi y configurar el webhook.
-4. Un pago de prueba de punta a punta.
+~~1. Que Wompi cambie el nombre del comercio a LunaticoIA~~ — la cuenta ya
+fue **aprobada** por Wompi (25 de agosto de 2026); el nombre en su panel
+sigue diciendo «interrapidisimo» (cosmético de su lado, no bloquea nada).
+
+~~2. Cuenta bancaria de payouts rechazada~~ — resuelto junto con la
+aprobación de la cuenta.
+
+~~3. Poner las tres llaves de Wompi y configurar el webhook~~ — hecho, las
+tres variables (`WOMPI_PUBLIC_KEY`, `WOMPI_INTEGRITY_SECRET`,
+`WOMPI_EVENTS_SECRET`) están puestas en Railway y el webhook responde.
+
+~~4. Un pago de prueba de punta a punta~~ — hecho: compra real del paquete
+"Prueba" ($9.900 COP), Wompi confirmó el pago, y los 400 créditos se
+abonaron solos a la cuenta sin intervención manual. **Wompi queda operativo
+al 100% en producción desde el 25 de agosto de 2026.**
 
 ~~5. Poner `RESEND_API_KEY` en Railway~~ — hecho: el correo (verificación de
 cuenta y recuperación de contraseña) está activo en producción desde el
@@ -629,5 +638,14 @@ cuenta y recuperación de contraseña) está activo en producción desde el
 ver "Streaming: se probó y se revirtió" más arriba antes de volver a
 intentarlo.
 
+**Actualizar `@anthropic-ai/sdk`** (sigue en 0.20.9, de 2024) se intentó y
+también se revirtió por romper producción — ver "`@anthropic-ai/sdk`:
+intento de actualizar..." más arriba.
+
+**TWA para Play Store** — la PWA ya funciona (instalable desde el navegador);
+empacarla como TWA para que aparezca en Google Play es el siguiente paso si
+se quiere, pero no se ha hecho.
+
 Y sin prisa: respaldos de la base, alojar las tipografías en el servidor, subir
-de Node 14 a Node 20, e historial de conversaciones.
+de Node 14 a Node 20, e historial de conversaciones más allá de la ventana
+de contexto actual.
