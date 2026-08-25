@@ -228,6 +228,22 @@ async function recorrido() {
     return 'sin boton de comprar, avisa ir al navegador';
   });
 
+  await paso('?fuente=apk apaga el esTWA aunque haya quedado pegado de antes', async () => {
+    // Bug real: esTWA solo se prendia, nunca se apagaba -- alguien que abrio
+    // el TWA una vez (o el primer build del APK, que traia ?fuente=twa) se
+    // quedaba con el aviso de "no se puede comprar" pegado para siempre en
+    // ese dispositivo, aunque despues abriera con el APK de verdad.
+    await pg.goto(`http://127.0.0.1:4711/?fuente=apk`, { waitUntil: 'networkidle' });
+    await pg.waitForTimeout(800);
+    if (!(await pg.isVisible('#app'))) throw new Error('no entro a la app con el token guardado');
+    await pg.click('#chipSaldo');
+    await pg.waitForTimeout(300);
+    const hayBoton = await pg.isVisible('#cuerpoPanel button.btn-luna');
+    await pg.click('#velo');
+    if (!hayBoton) throw new Error('el aviso de "no se puede comprar" quedo pegado con ?fuente=apk');
+    return 'el boton de comprar vuelve a aparecer';
+  });
+
   await pg.screenshot({ path: entorno.captura('lp-tras-registro.png') });
   await pg.close();
 

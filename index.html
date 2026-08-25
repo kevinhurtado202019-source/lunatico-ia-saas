@@ -1526,8 +1526,14 @@
   // Google Play Billing, no Wompi -- asi que dentro del TWA no se ofrece
   // comprar, solo se avisa que hay que hacerlo desde el navegador normal.
   // Se guarda en localStorage porque solo la URL de arranque trae el parametro;
-  // el resto de la sesion (paneles, recargas) no la vuelve a traer.
+  // el resto de la sesion (paneles, recargas) no la vuelve a traer. Hay que
+  // apagarlo explicito con ?fuente=apk (el APK de descarga directa, que SI
+  // deja comprar) -- si solo prendiera y nunca apagara, alguien que antes
+  // abrio con ?fuente=twa (probando en el navegador, o el primer build del
+  // APK) se quedaria con el aviso de "no se puede comprar" pegado para
+  // siempre en ese dispositivo, aunque despues instale la version correcta.
   if (/[?&]fuente=twa\b/.test(location.search)) localStorage.setItem('esTWA', '1');
+  else if (/[?&]fuente=apk\b/.test(location.search)) localStorage.setItem('esTWA', '0');
   var esTWA = localStorage.getItem('esTWA') === '1';
 
   // Un intercambio típico ronda los 3,6 créditos en modo Rápido.
