@@ -598,6 +598,12 @@ const recuperarLimiter = rateLimit({
     message: { error: 'Demasiadas solicitudes. Espera unos minutos.' }
 });
 
+const compartirLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, max: 30,
+    standardHeaders: true, legacyHeaders: false,
+    message: { error: 'Demasiados links compartidos. Espera un poco.' }
+});
+
 // ---------------------------------------------------------------------------
 // Estáticos (sin exponer el código fuente)
 // ---------------------------------------------------------------------------
@@ -654,6 +660,7 @@ async function connectDatabase() {
         const messages = db.collection('messages');
         const compras = db.collection('compras');
         const proyectos = db.collection('proyectos');
+        const compartidos = db.collection('compartidos');
 
         await users.createIndex({ email: 1 }, { unique: true });
         await users.createIndex({ verificationToken: 1 }, { sparse: true });
@@ -662,6 +669,7 @@ async function connectDatabase() {
         await messages.createIndex({ userId: 1, proyectoId: 1, createdAt: -1 });
         await compras.createIndex({ referencia: 1 }, { unique: true });
         await proyectos.createIndex({ userId: 1, createdAt: -1 });
+        await compartidos.createIndex({ codigo: 1 }, { unique: true });
 
         console.log('✓ MongoDB connected successfully');
     } catch (error) {
@@ -1494,6 +1502,56 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         } else {
             fallo(res, 500, 'No pudimos generar la respuesta. No se te descontó ningún crédito.', error, 'chat');
         }
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Compartir respuestas
+//
+// Snapshot aparte de la pregunta+respuesta, en su propia coleccion -- nunca
+// expone messages (el resto de la conversacion de nadie) a traves de un
+// endpoint publico. El texto se acepta tal cual lo manda el cliente (ya lo
+// genero la propia cuenta con sus creditos, no hay nada que verificar contra
+// la base) pero se topa en longitud, y GET es de lectura publica: no
+// necesita sesion, es justo el link que se comparte por WhatsApp.
+// ---------------------------------------------------------------------------
+
+const MAX_CARACTERES_COMPARTIR = 6000;
+
+app.post('/api/compartir', compartirLimiter, authenticateToken, async (req, res) => {
+    try {
+        const mensajeUsuario = typeof req.body.mensajeUsuario === 'string'
+            ? req.body.mensajeUsuario.trim().slice(0, MAX_CARACTERES_COMPARTIR) : '';
+        const respuestaIA = typeof req.body.respuestaIA === 'string'
+            ? req.body.respuestaIA.trim().slice(0, MAX_CARACTERES_COMPARTIR) : '';
+        if (!respuestaIA) return res.status(400).json({ error: 'No hay nada que compartir' });
+
+        const compartidos = db.collection('compartidos');
+        const nuevoId = new ObjectId();
+        const codigo = nuevoId.toString().slice(-10);
+        await compartidos.insertOne({
+            _id: nuevoId,
+            codigo,
+            userId: new ObjectId(req.user.userId),
+            mensajeUsuario,
+            respuestaIA,
+            createdAt: new Date()
+        });
+
+        res.json({ codigo, link: `${req.protocol}://${req.get('host')}/?compartido=${codigo}` });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos generar el link para compartir.', error, 'compartir');
+    }
+});
+
+app.get('/api/compartido/:codigo', async (req, res) => {
+    try {
+        const compartidos = db.collection('compartidos');
+        const doc = await compartidos.findOne({ codigo: req.params.codigo });
+        if (!doc) return res.status(404).json({ error: 'Este link ya no está disponible.' });
+        res.json({ mensajeUsuario: doc.mensajeUsuario, respuestaIA: doc.respuestaIA, creadoEn: doc.createdAt });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos cargar esta respuesta compartida.', error, 'compartido');
     }
 });
 

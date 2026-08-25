@@ -87,9 +87,13 @@ async function recorrido() {
   const nueva = async (o) => {
     const pg = await b.newPage(o || { viewport: { width: 1366, height: 900 } });
     pg.on('pageerror', e => errores.push('pageerror: ' + e.message));
-    pg.on('console', m => { if (m.type() === 'error' && !/favicon/i.test(m.text()) && !/status of 403/.test(m.text())) errores.push('console: ' + m.text()); });
+    // El navegador no incluye la URL en este mensaje de consola (solo en el
+    // evento 'response', que si se filtra por ruta abajo) -- se excluye por
+    // status nomas, igual que ya se hacia con el 403 de /api/stats.
+    pg.on('console', m => { if (m.type() === 'error' && !/favicon/i.test(m.text()) && !/status of 403/.test(m.text()) && !/status of 404/.test(m.text())) errores.push('console: ' + m.text()); });
     pg.on('response', r => {
-      if (r.status() >= 400 && !(r.status() === 403 && /\/api\/stats/.test(r.url()))) {
+      const esCompartidoInventado = r.status() === 404 && /\/api\/compartido\//.test(r.url());
+      if (r.status() >= 400 && !(r.status() === 403 && /\/api\/stats/.test(r.url())) && !esCompartidoInventado) {
         malas.push(r.status() + ' ' + r.url());
       }
     });
@@ -260,6 +264,44 @@ async function recorrido() {
     await pg.click('#velo');
     if (!hayBoton) throw new Error('el aviso de "no se puede comprar" quedo pegado con ?fuente=pwa');
     return 'el boton de comprar vuelve a aparecer';
+  });
+
+  await paso('Compartir una respuesta genera un link público que se ve sin sesión', async () => {
+    // No se hace clic en el boton "Compartir" de la UI (el share/clipboard
+    // nativo del navegador es fragil de automatizar) -- se pega al mismo
+    // endpoint que usa ese boton, y se prueba lo que de verdad importa: que
+    // el link resultante se vea bien SIN sesion, en una pestana aparte.
+    const link = await pg.evaluate(async () => {
+      var tok = localStorage.getItem('authToken');
+      var r = await fetch('/api/compartir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
+        body: JSON.stringify({ mensajeUsuario: '¿Qué es una IA?', respuestaIA: 'Una IA es un programa que aprende de datos.' })
+      });
+      var data = await r.json();
+      return data.link;
+    });
+    if (!link) throw new Error('no devolvió un link');
+
+    const p3 = await nueva();
+    await p3.goto(link, { waitUntil: 'networkidle' });
+    const pregunta = await p3.textContent('#compartidoPregunta');
+    const respuesta = await p3.textContent('#compartidoRespuesta');
+    const seVeElBotonDeProbar = await p3.isVisible('text=Prueba tú mismo');
+    await p3.close();
+    if (!/Qué es una IA/.test(pregunta)) throw new Error('no muestra la pregunta: ' + pregunta);
+    if (!/programa que aprende/.test(respuesta)) throw new Error('no muestra la respuesta: ' + respuesta);
+    if (!seVeElBotonDeProbar) throw new Error('no aparece el botón de probar gratis');
+    return 'se ve sin sesión, con pregunta, respuesta y botón de probar';
+  });
+
+  await paso('Un código de compartido inventado avisa que no está disponible', async () => {
+    const p4 = await nueva();
+    await p4.goto('http://127.0.0.1:4711/?compartido=noexiste', { waitUntil: 'networkidle' });
+    const respuesta = await p4.textContent('#compartidoRespuesta');
+    await p4.close();
+    if (!/no está disponible/i.test(respuesta)) throw new Error('no avisa: ' + respuesta);
+    return 'avisa que no está disponible, sin romperse';
   });
 
   await pg.screenshot({ path: entorno.captura('lp-tras-registro.png') });

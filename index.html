@@ -1258,6 +1258,25 @@
   </div>
 </div>
 
+<!-- ================= RESPUESTA COMPARTIDA (publica, sin login) ================= -->
+<div id="compartido" class="oculto">
+  <div class="lp" style="max-width:640px">
+    <div class="lp-nav" style="justify-content:center">
+      <div class="marca" style="font-size:22px">LunaticoIA</div>
+    </div>
+    <div class="bloque" style="margin-top:32px">
+      <h3>Pregunta</h3>
+      <p class="nota" id="compartidoPregunta"></p>
+    </div>
+    <div class="bloque">
+      <h3>LunaticoIA respondió</h3>
+      <div class="texto" id="compartidoRespuesta"></div>
+    </div>
+    <button class="btn btn-luna btn-luna-auto" style="width:100%;margin-top:20px" onclick="irAcceso('crear')">Prueba tú mismo, gratis →</button>
+    <p class="letra-chica" style="text-align:center;margin-top:10px">Sin tarjeta para empezar · 100 créditos de regalo</p>
+  </div>
+</div>
+
 <div class="celebracion" id="celebracionCompra" role="status" aria-live="polite">
   <div class="confeti" id="confetiContenedor" aria-hidden="true"></div>
   <div class="mensaje-celebracion">
@@ -1570,7 +1589,7 @@
   }
 
   function mostrarSolo(id) {
-    ['landing', 'acceso', 'app'].forEach(function (k) {
+    ['landing', 'acceso', 'app', 'compartido'].forEach(function (k) {
       var el = $(k);
       if (el) el.classList.toggle('oculto', k !== id);
     });
@@ -2012,6 +2031,46 @@
       a.click();
       document.body.removeChild(a);
       setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    };
+    caja.appendChild(btn);
+  }
+
+  function agregarBotonCompartir(caja, mensajeUsuario, respuestaIA) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'boton-descargar-respuesta';
+    btn.setAttribute('aria-label', 'Compartir esta respuesta');
+    btn.title = 'Compartir esta respuesta';
+    var textoOriginal = '🔗 Compartir';
+    btn.textContent = textoOriginal;
+    btn.onclick = function () {
+      btn.disabled = true; btn.textContent = 'Generando…';
+      api('/api/compartir', {
+        method: 'POST',
+        body: JSON.stringify({ mensajeUsuario: mensajeUsuario, respuestaIA: respuestaIA })
+      }).then(function (r) {
+        btn.disabled = false;
+        if (!r.res.ok) { btn.textContent = textoOriginal; return; }
+        var link = r.data.link;
+        function marcarCopiado() {
+          btn.textContent = '¡Copiado!';
+          setTimeout(function () { btn.textContent = textoOriginal; }, 1600);
+        }
+        if (navigator.share) {
+          // En celular, el share nativo (WhatsApp, etc.) es mejor que copiar.
+          navigator.share({ title: 'LunaticoIA', text: 'Mira lo que me respondió LunaticoIA:', url: link })
+            .catch(function () {});
+          btn.textContent = textoOriginal;
+        } else if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(link).then(marcarCopiado, function () {
+            copiarConFallback(link, marcarCopiado);
+          });
+        } else {
+          copiarConFallback(link, marcarCopiado);
+        }
+      }).catch(function () {
+        btn.disabled = false; btn.textContent = textoOriginal;
+      });
     };
     caja.appendChild(btn);
   }
@@ -2461,6 +2520,7 @@
             pintarEmoji(esperando.texto);
             agregarBotonEscuchar(esperando.caja, esperando.texto);
             agregarBotonDescargarRespuesta(esperando.caja, textoFinal);
+            agregarBotonCompartir(esperando.caja, mensaje, textoFinal);
 
             var c = json.consumo;
             if (c) {
@@ -2979,6 +3039,7 @@
   var resetToken = parametrosURL.get('reset');
   var verificacion = parametrosURL.get('verificacion');
   var refCode = parametrosURL.get('ref');
+  var codigoCompartido = parametrosURL.get('compartido');
 
   // Programa de referidos: si alguien llega con un link de invitacion,
   // se guarda para usarlo cuando cree la cuenta -- puede que navegue un
@@ -2988,7 +3049,13 @@
 
   if (resetToken || verificacion || refCode) history.replaceState(null, '', location.pathname);
 
-  if (resetToken) {
+  if (codigoCompartido) {
+    // Link publico de una respuesta compartida: se ve sin sesion, sin
+    // importar si este navegador tiene una cuenta activa o no -- es
+    // justo el link que circula por WhatsApp.
+    mostrarSolo('compartido');
+    mostrarCompartido(codigoCompartido);
+  } else if (resetToken) {
     // Enlace de "olvidé mi contraseña": manda a elegir una nueva sin
     // importar si este navegador tiene o no una sesión activa.
     tokenReset = resetToken;
@@ -3037,6 +3104,34 @@
       $('entrada').scrollIntoView({ block: 'nearest' });
     }, 300);
   });
+
+  // Vista publica de una respuesta compartida (sin sesion, sin llamar a
+  // api() porque esa funcion manda el Authorization si hay token guardado,
+  // y este endpoint es publico a proposito -- no hace falta ni deberia).
+  function mostrarCompartido(codigo) {
+    $('compartidoPregunta').textContent = 'Cargando…';
+    $('compartidoRespuesta').textContent = '';
+    fetch('/api/compartido/' + encodeURIComponent(codigo))
+      .then(function (res) {
+        return res.json().catch(function () { return null; }).then(function (data) {
+          return { res: res, data: data };
+        });
+      })
+      .then(function (r) {
+        if (!r.res.ok) {
+          $('compartidoPregunta').textContent = '';
+          $('compartidoRespuesta').textContent = (r.data && r.data.error) || 'Este link ya no está disponible.';
+          return;
+        }
+        $('compartidoPregunta').textContent = r.data.mensajeUsuario || '';
+        $('compartidoRespuesta').innerHTML = renderizarMarkdown(r.data.respuestaIA || '');
+        pintarEmoji($('compartidoRespuesta'));
+      })
+      .catch(function () {
+        $('compartidoPregunta').textContent = '';
+        $('compartidoRespuesta').textContent = 'No se pudo cargar. Revisa tu conexión.';
+      });
+  }
 
   // Fiesta de confeti + sonido cuando se confirma una compra. El sonido se
   // sintetiza con Web Audio (un "ta-da" de 4 notas) en vez de un archivo de
