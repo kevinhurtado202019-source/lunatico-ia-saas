@@ -281,6 +281,19 @@ const PAQUETES = {
     pro:     { creditos: 8000,  precioCOP: 129900, nombre: 'Pro'     }
 };
 
+// Respaldo a la regla de "cero emojis" del system prompt: el modelo (sobre
+// todo Rapido) a veces la ignora igual, confirmado en produccion con
+// pruebas reales. En vez de seguir peleando por prompt, se filtran ya
+// generados -- garantizado, no depende de que el modelo obedezca.
+const EMOJI_REGEX = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}]/gu;
+function quitarEmojis(texto) {
+    return texto
+        .replace(EMOJI_REGEX, '')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/[ \t]{2,}/g, ' ')
+        .trimEnd();
+}
+
 // El detalle del fallo va al log; al cliente solo un mensaje util. Antes se
 // devolvia error.message tal cual, y el usuario llegaba a ver el JSON de la
 // API de Anthropic con su request_id dentro del chat.
@@ -1289,6 +1302,17 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
                 .join('');
         }
         if (!aiMessage) throw new Error('Invalid response from Claude API');
+
+        // El system prompt ya pide "cero emojis" por defecto, pero el modelo
+        // (sobre todo Rapido) a veces los pone igual -- se filtran aca como
+        // respaldo garantizado. Se respeta si la persona pidio otro tono
+        // (con emojis, etc.) en sus instrucciones personalizadas -- mismo
+        // criterio que usa construirSystemPrompt para decidir si aplican.
+        const tieneInstruccionesPropias = !!(
+            (proyectoActual && typeof proyectoActual.instrucciones === 'string' && proyectoActual.instrucciones.trim()) ||
+            (user && typeof user.instrucciones === 'string' && user.instrucciones.trim())
+        );
+        if (!tieneInstruccionesPropias) aiMessage = quitarEmojis(aiMessage);
 
         // Si la respuesta se corto (llego al limite de tokens, o Anthropic la
         // pauso a mitad de una busqueda/ejecucion de codigo larga) el usuario
