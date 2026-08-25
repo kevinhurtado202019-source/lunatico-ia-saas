@@ -1527,13 +1527,17 @@
   // comprar, solo se avisa que hay que hacerlo desde el navegador normal.
   // Se guarda en localStorage porque solo la URL de arranque trae el parametro;
   // el resto de la sesion (paneles, recargas) no la vuelve a traer. Hay que
-  // apagarlo explicito con ?fuente=apk (el APK de descarga directa, que SI
-  // deja comprar) -- si solo prendiera y nunca apagara, alguien que antes
-  // abrio con ?fuente=twa (probando en el navegador, o el primer build del
+  // apagarlo explicito con cualquier OTRA fuente conocida (?fuente=apk, el
+  // APK de descarga directa; ?fuente=pwa, el "Descargar app" de toda la
+  // vida via manifest.json > start_url) -- ambas SI dejan comprar. Si esto
+  // solo prendiera y nunca apagara, alguien que antes abrio con ?fuente=twa
+  // en ESE MISMO Chrome (probando en el navegador, o el primer build del
   // APK) se quedaria con el aviso de "no se puede comprar" pegado para
-  // siempre en ese dispositivo, aunque despues instale la version correcta.
+  // siempre ahi, sin importar que instalara despues -- exactamente lo que
+  // paso: el boton "Descargar app" (PWA) comparte el Chrome del celular
+  // con el navegador normal, asi que hereda el mismo localStorage.
   if (/[?&]fuente=twa\b/.test(location.search)) localStorage.setItem('esTWA', '1');
-  else if (/[?&]fuente=apk\b/.test(location.search)) localStorage.setItem('esTWA', '0');
+  else if (/[?&]fuente=(apk|pwa)\b/.test(location.search)) localStorage.setItem('esTWA', '0');
   var esTWA = localStorage.getItem('esTWA') === '1';
 
   // Un intercambio típico ronda los 3,6 créditos en modo Rápido.

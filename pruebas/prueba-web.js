@@ -244,6 +244,24 @@ async function recorrido() {
     return 'el boton de comprar vuelve a aparecer';
   });
 
+  await paso('?fuente=pwa tambien apaga el esTWA (bug real reportado)', async () => {
+    // Caso real: alguien probo el TWA en el navegador (o el primer build)
+    // con ?fuente=twa, y despues instalo la PWA de siempre con el boton
+    // "Descargar app" -- ese boton usa manifest.json > start_url, que es
+    // ?fuente=pwa, no ?fuente=apk. Comparte el mismo Chrome (mismo
+    // localStorage) que el navegador normal, asi que tambien tenia que
+    // limpiar el esTWA pegado, y al principio no lo hacia.
+    await pg.goto(`http://127.0.0.1:4711/?fuente=twa`, { waitUntil: 'networkidle' }); // deja esTWA pegado en 1 otra vez
+    await pg.goto(`http://127.0.0.1:4711/?fuente=pwa`, { waitUntil: 'networkidle' });
+    await pg.waitForTimeout(800);
+    await pg.click('#chipSaldo');
+    await pg.waitForTimeout(300);
+    const hayBoton = await pg.isVisible('#cuerpoPanel button.btn-luna');
+    await pg.click('#velo');
+    if (!hayBoton) throw new Error('el aviso de "no se puede comprar" quedo pegado con ?fuente=pwa');
+    return 'el boton de comprar vuelve a aparecer';
+  });
+
   await pg.screenshot({ path: entorno.captura('lp-tras-registro.png') });
   await pg.close();
 
