@@ -511,7 +511,7 @@ app.use((req, res, next) => {
 // servir de verdad (los necesita la PWA) -- todo lo demás con esas
 // extensiones sigue bloqueado para no exponer server-saas.js, package.json,
 // este mismo archivo, etc.
-const PERMITIDOS_PWA = new Set(['/manifest.json', '/sw.js']);
+const PERMITIDOS_PWA = new Set(['/manifest.json', '/sw.js', '/.well-known/assetlinks.json']);
 const BLOQUEADOS = /\.(js|json|md|bat|ps1|lock|yml|yaml)$/i;
 app.use((req, res, next) => {
     if (req.path.startsWith('/api/')) return next();
@@ -519,6 +519,24 @@ app.use((req, res, next) => {
     if (BLOQUEADOS.test(req.path)) return res.status(404).end();
     next();
 });
+
+// Digital Asset Links: asi confirma Android que el TWA de Play y este
+// dominio son la misma app, para que se abra sin barra de direcciones.
+// No puede pasar por express.static de abajo: esa carpeta empieza con un
+// punto (".well-known") y el estatico usa dotfiles:'ignore' a proposito
+// (para no exponer .env, .git, etc. por accidente) -- se sirve aparte,
+// embebido aqui en vez de leerlo de un archivo, porque solo cambia si se
+// rota la llave de firma de la app (evento raro y manual).
+const ASSETLINKS_TWA = [{
+    relation: ['delegate_permission/common.handle_all_urls'],
+    target: {
+        namespace: 'android_app',
+        package_name: 'uk.lunaticoia.twa',
+        sha256_cert_fingerprints: ['23:DB:84:EF:0D:F4:EA:C6:E0:C9:4B:FE:8E:20:82:43:97:04:B7:3F:D5:7D:24:1A:3D:64:E5:9C:71:0B:C3:FC']
+    }
+}];
+app.get('/.well-known/assetlinks.json', (req, res) => res.json(ASSETLINKS_TWA));
+
 app.use(express.static('.', { dotfiles: 'ignore', index: 'index.html' }));
 
 // ---------------------------------------------------------------------------
