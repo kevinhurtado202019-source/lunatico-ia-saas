@@ -1,6 +1,6 @@
 # LunaticoIA — Resumen del proyecto
 
-Actualizado: 25 de agosto de 2026
+Actualizado: 25 de agosto de 2026 (última actualización: celebración de compra)
 
 ---
 
@@ -10,6 +10,7 @@ Actualizado: 25 de agosto de 2026
 - **Wompi 100% en producción**, verificado con una compra real: pagas con Nequi, PSE o tarjeta, en pesos colombianos, sin mensualidad.
 - 4 paquetes de créditos (Prueba $9.900, Básico $24.900, Popular $54.900, Pro $129.900). Los créditos no caducan.
 - Los créditos se abonan solos apenas Wompi confirma el pago (webhook automático).
+- **Celebración al comprar**: al volver del pago, sale un mensaje de "¡Felicidades!" con confeti animado y un sonido corto — así el cliente siente que la compra sí funcionó.
 - Cuenta del dueño con créditos ilimitados.
 
 ### La inteligencia artificial
