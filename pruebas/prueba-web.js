@@ -204,6 +204,30 @@ async function recorrido() {
     return 'responde y descuenta a 96';
   });
 
+  await paso('Sin TWA, el panel de paquetes muestra "Comprar"', async () => {
+    await pg.click('#chipSaldo');
+    await pg.waitForTimeout(300);
+    const hayBoton = await pg.isVisible('#cuerpoPanel button.btn-luna');
+    await pg.click('#velo');
+    if (!hayBoton) throw new Error('no aparecio el boton de comprar');
+    return 'ok';
+  });
+
+  await paso('Con ?fuente=twa, no se puede comprar dentro de la app', async () => {
+    // El token queda en localStorage: recargar con el parametro de arranque
+    // del TWA entra directo a la app, sin pasar por el registro de nuevo.
+    await pg.goto(`http://127.0.0.1:4711/?fuente=twa`, { waitUntil: 'networkidle' });
+    await pg.waitForTimeout(800);
+    if (!(await pg.isVisible('#app'))) throw new Error('no entro a la app con el token guardado');
+    await pg.click('#chipSaldo');
+    await pg.waitForTimeout(300);
+    const hayBoton = await pg.isVisible('#cuerpoPanel button.btn-luna');
+    const texto = await pg.textContent('#cuerpoPanel');
+    if (hayBoton) throw new Error('el boton de comprar sigue visible dentro del TWA');
+    if (!/lunaticoia\.uk/.test(texto)) throw new Error('no avisa donde comprar: ' + texto.slice(0, 150));
+    return 'sin boton de comprar, avisa ir al navegador';
+  });
+
   await pg.screenshot({ path: entorno.captura('lp-tras-registro.png') });
   await pg.close();
 

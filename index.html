@@ -1510,6 +1510,16 @@
   var MAX_IMAGEN_BYTES = 10 * 1024 * 1024;
   var reducirMovimiento = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  // La app empaquetada como TWA para Play Store manda ?fuente=twa en la URL
+  // de arranque (twa-manifest.json > startUrl). Google exige que los bienes
+  // digitales (nuestros creditos) comprados DENTRO de una app de Play usen
+  // Google Play Billing, no Wompi -- asi que dentro del TWA no se ofrece
+  // comprar, solo se avisa que hay que hacerlo desde el navegador normal.
+  // Se guarda en localStorage porque solo la URL de arranque trae el parametro;
+  // el resto de la sesion (paneles, recargas) no la vuelve a traer.
+  if (/[?&]fuente=twa\b/.test(location.search)) localStorage.setItem('esTWA', '1');
+  var esTWA = localStorage.getItem('esTWA') === '1';
+
   // Un intercambio típico ronda los 3,6 créditos en modo Rápido.
   var CRED_POR_MSG = 3.6;
 
@@ -2827,6 +2837,27 @@
       '<div class="dato" style="padding-top:0"><span>Tu saldo</span><b class="num">' +
       num(yo ? yo.creditBalance : 0) + '</b></div></div>';
 
+    // Google exige Google Play Billing (no Wompi) para vender bienes
+    // digitales DENTRO de una app publicada en Play -- asi que ahi no se
+    // ofrece comprar, solo se avisa donde hacerlo. Ver la nota junto a
+    // "esTWA" mas arriba.
+    if (esTWA) {
+      html += paquetes.map(function (p) {
+        var msgs = Math.floor(p.creditos / CRED_POR_MSG);
+        return '' +
+          '<div class="paquete">' +
+            '<div class="info">' +
+              '<div class="nombre">' + esc(p.nombre) + '</div>' +
+              '<div class="detalle">' + num(p.creditos) + ' créditos · ~' + num(msgs) + ' mensajes</div>' +
+            '</div>' +
+            '<div class="precio">$' + num(p.precioCOP) + '<small>COP</small></div>' +
+          '</div>';
+      }).join('');
+      html += '<p class="nota" style="margin-top:16px">Para comprar créditos, abre <b>lunaticoia.uk</b> desde tu ' +
+        'navegador (Chrome, Safari, etc.) — la compra no está disponible dentro de esta app.</p>';
+      return html;
+    }
+
     html += paquetes.map(function (p) {
       var msgs = Math.floor(p.creditos / CRED_POR_MSG);
       var unidad = Math.round(p.precioCOP / p.creditos * 10) / 10;
@@ -2851,6 +2882,7 @@
   }
 
   window.comprar = function (clave) {
+    if (esTWA) return; // sin boton para llamar a esto en el TWA, pero por si acaso.
     var aviso = $('avisoCompra');
     if (aviso) aviso.innerHTML = '<p class="nota" style="margin-top:12px">Abriendo el pago…</p>';
 
