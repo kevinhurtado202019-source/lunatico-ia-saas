@@ -1002,6 +1002,7 @@
           <button class="btn btn-luna btn-luna-auto" onclick="irAcceso('crear')">Probar con 100 créditos gratis</button>
           <button class="btn btn-borde" onclick="document.getElementById('precios').scrollIntoView({behavior:'smooth'})">Ver precios</button>
           <button class="btn btn-borde oculto" id="btnInstalarApp" onclick="instalarApp()">📲 Descargar app</button>
+          <a class="btn btn-borde oculto" id="btnDescargarApk" href="/LunaticoIA.apk" download>Descargar APK</a>
         </div>
         <p class="letra-chica">Sin tarjeta para empezar · Sin cobros automáticos</p>
       </div>
@@ -3091,6 +3092,17 @@
     var btn = document.getElementById('btnInstalarApp');
     if (btn) btn.classList.add('oculto');
   });
+
+  // Alternativa al boton de arriba: bajar el .apk directo, para quien
+  // prefiera eso o su navegador no dispare beforeinstallprompt. Solo tiene
+  // sentido en Android (es lo unico que sabe instalar un .apk), asi que se
+  // muestra solo ahi -- no hay evento del navegador que avise esto, toca
+  // mirar el user agent. Android SIEMPRE va a mostrar el aviso de "fuente
+  // desconocida" al instalarlo asi, a diferencia del boton de arriba.
+  if (/Android/i.test(navigator.userAgent)) {
+    var btnApk = document.getElementById('btnDescargarApk');
+    if (btnApk) btnApk.classList.remove('oculto');
+  }
 </script>
 </body>
 </html>
