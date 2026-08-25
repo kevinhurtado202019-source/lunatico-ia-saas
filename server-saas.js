@@ -450,6 +450,11 @@ const CORREO_CONFIGURADO = Boolean(process.env.RESEND_API_KEY);
 const CORREO_REMITENTE = process.env.SMTP_FROM;
 const VENCIMIENTO_VERIFICACION_MS = 24 * 60 * 60 * 1000;
 const VENCIMIENTO_RESET_MS = 60 * 60 * 1000;
+// Un intercambio tipico ronda los 3,6 creditos en modo Rapido (ver
+// CRED_POR_MSG en index.html) -- 30 creditos son mas o menos 8 mensajes de
+// margen antes de quedarse sin nada, tiempo suficiente para que el correo
+// llegue y la persona compre antes de toparse con el bloqueo de saldo.
+const UMBRAL_SALDO_BAJO = 30;
 
 function escHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
@@ -531,6 +536,19 @@ function enviarRecuperacion(req, destinatario, token) {
         '<p>Para elegir una nueva contraseña entra aquí (vence en 1 hora):</p>' +
             `<p><a href="${link}">Elegir nueva contraseña</a></p>` +
             '<p>Si no lo pediste tú, ignora este mensaje: tu contraseña sigue igual.</p>'
+    );
+}
+
+function enviarSaldoBajo(req, destinatario, nombre, saldo) {
+    const link = `${req.protocol}://${req.get('host')}/`;
+    return enviarCorreo(
+        destinatario,
+        'Se te están acabando los créditos en LunaticoIA',
+        `Hola${nombre ? ' ' + nombre : ''},\n\nTe quedan ${saldo} créditos en LunaticoIA. Cuando se acaben, ` +
+            `el chat deja de responder hasta que compres más.\n\nCompra un paquete aquí (los créditos no caducan):\n${link}`,
+        `<p>Hola${nombre ? ' ' + escHtml(nombre) : ''},</p>` +
+            `<p>Te quedan <strong>${saldo} créditos</strong> en LunaticoIA. Cuando se acaben, el chat deja de responder hasta que compres más.</p>` +
+            `<p><a href="${link}">Comprar más créditos</a> (no caducan).</p>`
     );
 }
 
@@ -1430,6 +1448,17 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
 
         if (!ilimitado) {
             await users.updateOne({ _id: userId }, { $set: { creditBalance: nuevoSaldo } });
+            // Aviso de saldo bajo: solo en el momento exacto en que CRUZA el
+            // umbral hacia abajo (antes estaba por encima, ahora por debajo),
+            // no en cada mensaje mientras siga bajo -- si no, mandaria el
+            // mismo correo una y otra vez. Si despues compra mas y lo vuelve
+            // a gastar, cruza otra vez y le llega el aviso de nuevo, que es
+            // justo lo que se quiere. No bloquea la respuesta al usuario: si
+            // el correo falla o tarda, no le afecta el chat (enviarCorreo ya
+            // atrapa sus propios errores).
+            if (user.creditBalance >= UMBRAL_SALDO_BAJO && nuevoSaldo < UMBRAL_SALDO_BAJO) {
+                enviarSaldoBajo(req, user.email, user.name, nuevoSaldo);
+            }
         }
 
         const uso = response.usage || {};
