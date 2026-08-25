@@ -263,6 +263,17 @@ const MODELOS = {
 const MODELO_POR_DEFECTO = 'rapido';
 
 const CREDITOS_DE_BIENVENIDA = 100;
+
+// Programa de referidos: mismo monto que el bono de bienvenida, para los
+// dos lados. El tope es la unica proteccion real contra alguien creando
+// muchas cuentas referidas para farmear creditos hacia una sola cuenta
+// "referidora" -- el bono del REFERIDO se paga igual pase lo que pase (ese
+// riesgo ya existe con cualquier registro nuevo, con o sin referidos, asi
+// que no vale la pena bloquearlo aqui); lo que se topa es cuantas veces una
+// misma cuenta puede cobrar por referir. Con 20 de tope, el peor caso de
+// abuso cuesta unos $2.000 COP en creditos de mas -- nada grave.
+const CREDITOS_BONO_REFERIDO = 100;
+const MAX_REFERIDOS_CON_BONO = 20;
 // Con herramientas de por medio (sobre todo code_execution generando codigo
 // largo, como una pagina web completa) una respuesta puede necesitar mucho
 // mas espacio de salida del que parece. En 4096 se estaba cortando a mitad
@@ -337,6 +348,43 @@ async function asegurarVerificado(users, user) {
 
 function generarToken() {
     return crypto.randomBytes(32).toString('hex');
+}
+
+// Los usuarios creados antes del programa de referidos no tienen codigo
+// propio. Se les genera la primera vez que hace falta, igual que el saldo
+// o la verificacion. El _id de Mongo ya es unico de por si, asi que tomar
+// un pedazo del suyo evita tener que revisar colisiones contra la base.
+async function asegurarCodigoReferido(users, user) {
+    if (typeof user.codigoReferido === 'string' && user.codigoReferido) return user;
+    const codigoReferido = user._id.toString().slice(-8);
+    await users.updateOne({ _id: user._id }, { $set: { codigoReferido } });
+    user.codigoReferido = codigoReferido;
+    return user;
+}
+
+// Se llama cuando una cuenta referida queda verificada (al registrarse, si
+// el correo esta apagado, o al hacer clic en el enlace de verificacion). El
+// bono del referido se paga siempre -- ese riesgo de cuentas falsas ya
+// existe con cualquier registro nuevo. Lo unico que se topa es cuantas
+// veces cobra la cuenta que referio, con MAX_REFERIDOS_CON_BONO.
+async function otorgarBonoReferidoSiAplica(users, referredUser) {
+    if (!referredUser.referidoPor || referredUser.bonoReferidoPagado) return;
+    await users.updateOne(
+        { _id: referredUser._id },
+        { $set: { bonoReferidoPagado: true }, $inc: { creditBalance: CREDITOS_BONO_REFERIDO } }
+    );
+    const referrer = await users.findOne({ _id: referredUser.referidoPor });
+    if (!referrer || (referrer.referidosExitosos || 0) >= MAX_REFERIDOS_CON_BONO) return;
+    await users.updateOne(
+        { _id: referrer._id },
+        {
+            $inc: {
+                creditBalance: CREDITOS_BONO_REFERIDO,
+                referidosExitosos: 1,
+                creditosGanadosPorReferidos: CREDITOS_BONO_REFERIDO
+            }
+        }
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -592,6 +640,7 @@ async function connectDatabase() {
         await users.createIndex({ email: 1 }, { unique: true });
         await users.createIndex({ verificationToken: 1 }, { sparse: true });
         await users.createIndex({ resetToken: 1 }, { sparse: true });
+        await users.createIndex({ codigoReferido: 1 }, { sparse: true });
         await messages.createIndex({ userId: 1, proyectoId: 1, createdAt: -1 });
         await compras.createIndex({ referencia: 1 }, { unique: true });
         await proyectos.createIndex({ userId: 1, createdAt: -1 });
@@ -620,10 +669,24 @@ app.post('/api/register', registerLimiter, async (req, res) => {
         if (existing) return res.status(400).json({ error: 'User already exists' });
 
         const hashed = await bcryptjs.hash(password, 10);
+
+        // Programa de referidos: si trae un codigo valido, se guarda quien
+        // refirio -- el bono se paga despues, cuando el correo quede
+        // verificado (aca mismo si el correo esta apagado, o en
+        // /api/verificar-correo). Un codigo invalido o inventado simplemente
+        // se ignora, no rompe el registro.
+        let referidoPor = null;
+        if (typeof req.body.refCode === 'string' && req.body.refCode.trim()) {
+            const referrer = await users.findOne({ codigoReferido: req.body.refCode.trim() });
+            if (referrer) referidoPor = referrer._id;
+        }
+
         // Sin correo configurado, nadie queda bloqueado: se da la cuenta por
         // verificada de una vez, igual que se hacía antes de esta función.
         const verificationToken = CORREO_CONFIGURADO ? generarToken() : null;
+        const nuevoId = new ObjectId();
         const user = {
+            _id: nuevoId,
             email: email.toLowerCase(),
             name: name || email.split('@')[0],
             password: hashed,
@@ -631,12 +694,22 @@ app.post('/api/register', registerLimiter, async (req, res) => {
             createdAt: new Date(),
             emailVerified: !CORREO_CONFIGURADO,
             verificationToken,
-            verificationTokenExpira: CORREO_CONFIGURADO ? new Date(Date.now() + VENCIMIENTO_VERIFICACION_MS) : null
+            verificationTokenExpira: CORREO_CONFIGURADO ? new Date(Date.now() + VENCIMIENTO_VERIFICACION_MS) : null,
+            codigoReferido: nuevoId.toString().slice(-8),
+            referidoPor,
+            bonoReferidoPagado: false,
+            referidosExitosos: 0,
+            creditosGanadosPorReferidos: 0
         };
 
-        const result = await users.insertOne(user);
+        await users.insertOne(user);
+        if (user.emailVerified) {
+            await otorgarBonoReferidoSiAplica(users, user);
+            if (user.referidoPor) user.creditBalance += CREDITOS_BONO_REFERIDO;
+        }
+
         const token = jwt.sign(
-            { userId: result.insertedId.toString(), email: user.email },
+            { userId: nuevoId.toString(), email: user.email },
             process.env.JWT_SECRET,
             { expiresIn: '7d' }
         );
@@ -706,6 +779,7 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
 
         user = await asegurarSaldo(users, user);
         user = await asegurarVerificado(users, user);
+        user = await asegurarCodigoReferido(users, user);
 
         res.json({
             email: user.email,
@@ -717,6 +791,10 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
             correoConfigurado: CORREO_CONFIGURADO,
             instrucciones: typeof user.instrucciones === 'string' ? user.instrucciones : '',
             maxCaracteresInstrucciones: MAX_CARACTERES_INSTRUCCIONES,
+            codigoReferido: user.codigoReferido,
+            creditosBonoReferido: CREDITOS_BONO_REFERIDO,
+            referidosExitosos: user.referidosExitosos || 0,
+            creditosGanadosPorReferidos: user.creditosGanadosPorReferidos || 0,
             modelos: Object.keys(MODELOS).map((k) => ({
                 clave: k,
                 etiqueta: MODELOS[k].etiqueta,
@@ -809,6 +887,7 @@ app.get('/api/verificar-correo', async (req, res) => {
             { _id: user._id },
             { $set: { emailVerified: true }, $unset: { verificationToken: '', verificationTokenExpira: '' } }
         );
+        await otorgarBonoReferidoSiAplica(users, user);
 
         res.redirect('/?verificacion=ok');
     } catch (error) {

@@ -95,6 +95,35 @@ function eventoWompi(referencia, status, monto, secreto) {
         st.status === 200 && st.body.creditBalance === 100 && st.body.modelos.length === 4,
         'modelos=' + (st.body.modelos || []).map((m) => m.clave + ':x' + m.multiplicador).join(' '));
 
+    // --- Programa de referidos (cuentas aparte, para no descuadrar el saldo
+    // de la cuenta principal que usan las pruebas de compra más abajo) ---
+    check('Stats trae el código de referido propio',
+        typeof st.body.codigoReferido === 'string' && st.body.codigoReferido.length > 0,
+        'código=' + st.body.codigoReferido);
+
+    const emailRefA = `cred-refA-${Date.now()}@test.local`;
+    const regRefA = await req('POST', '/api/register', { email: emailRefA, password: 'Clave123!' });
+    const tokRefA = regRefA.body.token;
+    const statsRefA = await req('GET', '/api/stats', null, { Authorization: 'Bearer ' + tokRefA });
+    const codigoDeA = statsRefA.body.codigoReferido;
+
+    const emailRefB = `cred-refB-${Date.now()}@test.local`;
+    const regRefB = await req('POST', '/api/register', { email: emailRefB, password: 'Clave123!', refCode: codigoDeA });
+    check('El referido gana 100 + 100 (bienvenida + bono) al registrarse',
+        regRefB.status === 200 && regRefB.body.user && regRefB.body.user.creditBalance === 200,
+        'saldo=' + (regRefB.body.user && regRefB.body.user.creditBalance));
+
+    const statsRefATrasReferir = await req('GET', '/api/stats', null, { Authorization: 'Bearer ' + tokRefA });
+    check('Quien invitó también gana el bono, y se cuenta el referido',
+        statsRefATrasReferir.body.creditBalance === 200 && statsRefATrasReferir.body.referidosExitosos === 1,
+        'saldo=' + statsRefATrasReferir.body.creditBalance + ' referidos=' + statsRefATrasReferir.body.referidosExitosos);
+
+    const regInventado = await req('POST', '/api/register',
+        { email: `cred-fake-${Date.now()}@test.local`, password: 'Clave123!', refCode: 'noexiste' });
+    check('Un código de referido inventado no rompe el registro',
+        regInventado.status === 200 && regInventado.body.user.creditBalance === 100,
+        'saldo=' + (regInventado.body.user && regInventado.body.user.creditBalance));
+
     // --- Migración de usuario antiguo ---
     const viejo = await users.insertOne({
         email: 'viejo@test.local',

@@ -1661,10 +1661,12 @@
       body: JSON.stringify({
         name: $('nombreCrear').value.trim(),
         email: $('correoCrear').value.trim(),
-        password: $('claveCrear').value
+        password: $('claveCrear').value,
+        refCode: localStorage.getItem('refPendiente') || undefined
       })
     }).then(function (r) {
       if (!r.res.ok) throw new Error((r.data && r.data.error) || 'No pudimos crear la cuenta');
+      localStorage.removeItem('refPendiente');
       autenticado(r.data);
     }).catch(function (err) {
       mostrarAviso(traducir(err.message));
@@ -2164,6 +2166,26 @@
       });
     } else {
       copiarConFallback(texto, marcarCopiado);
+    }
+  };
+
+  window.copiarLinkReferido = function (boton) {
+    var link = location.origin + '/?ref=' + (yo && yo.codigoReferido || '');
+    function marcarCopiado() {
+      var textoOriginal = boton.textContent;
+      boton.textContent = '¡Copiado!';
+      boton.classList.add('copiado');
+      setTimeout(function () {
+        boton.textContent = textoOriginal;
+        boton.classList.remove('copiado');
+      }, 1600);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(marcarCopiado, function () {
+        copiarConFallback(link, marcarCopiado);
+      });
+    } else {
+      copiarConFallback(link, marcarCopiado);
     }
   };
 
@@ -2802,6 +2824,15 @@
         '<div class="dato"><span>Correo</span><b>' + esc(yo.email) + '</b></div>' +
       '</div>' +
       '<div class="bloque">' +
+        '<h3>Invita y gana</h3>' +
+        '<p class="nota">Comparte tu link. Cuando alguien se registre con él y verifique su correo, ' +
+        'ambos ganan ' + num(yo.creditosBonoReferido || 100) + ' créditos gratis.</p>' +
+        '<div class="dato"><span>Personas invitadas</span><b class="num">' + num(yo.referidosExitosos || 0) + '</b></div>' +
+        '<div class="dato"><span>Créditos ganados</span><b class="num">' + num(yo.creditosGanadosPorReferidos || 0) + '</b></div>' +
+        '<p class="nota" style="word-break:break-all">' + esc(location.origin + '/?ref=' + (yo.codigoReferido || '')) + '</p>' +
+        '<button class="btn btn-borde" style="width:100%" onclick="copiarLinkReferido(this)">Copiar link de invitación</button>' +
+      '</div>' +
+      '<div class="bloque">' +
         '<h3>Cómo se cobra</h3>' +
         '<p class="nota">Cada respuesta descuenta según los tokens que consume de verdad, no por mensaje. ' +
         (function () {
@@ -2947,8 +2978,15 @@
   var parametrosURL = new URLSearchParams(location.search);
   var resetToken = parametrosURL.get('reset');
   var verificacion = parametrosURL.get('verificacion');
+  var refCode = parametrosURL.get('ref');
 
-  if (resetToken || verificacion) history.replaceState(null, '', location.pathname);
+  // Programa de referidos: si alguien llega con un link de invitacion,
+  // se guarda para usarlo cuando cree la cuenta -- puede que navegue un
+  // rato antes de registrarse, y la URL solo trae el parametro la primera
+  // vez que entra.
+  if (refCode) localStorage.setItem('refPendiente', refCode);
+
+  if (resetToken || verificacion || refCode) history.replaceState(null, '', location.pathname);
 
   if (resetToken) {
     // Enlace de "olvidé mi contraseña": manda a elegir una nueva sin
