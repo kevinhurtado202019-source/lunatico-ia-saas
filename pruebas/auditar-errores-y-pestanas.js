@@ -3,10 +3,30 @@ const entorno = require('./entorno');
 const fake = require('./fake-mongo');
 require.cache[require.resolve('mongodb')] = { id:'m',filename:'m',loaded:true,exports:fake,paths:[] };
 let romper = false;
-function A(){ this.messages={ create: async p => {
-  if (romper) { const e = new Error('401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"},"request_id":"req_011SECRETO"}'); throw e; }
-  return { content:[{type:'text',text:'Respuesta de prueba.'}], usage:{input_tokens:1600,output_tokens:400}, model:p.model };
-} }; }
+function A(){ this.messages={
+  create: async p => {
+    if (romper) { const e = new Error('401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"},"request_id":"req_011SECRETO"}'); throw e; }
+    return { content:[{type:'text',text:'Respuesta de prueba.'}], usage:{input_tokens:1600,output_tokens:400}, model:p.model };
+  },
+  // Doble de MessageStream (ver pruebas/prueba-web.js): server-saas.js ahora
+  // llama .stream() en vez de .create() para /api/chat. Si "romper" esta
+  // activo, falla ANTES de que llegue ningun texto -- mismo camino que
+  // .create() fallando, para que la prueba de fuga de errores siga valiendo.
+  stream: function (p) {
+    if (romper) { const e = new Error('401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"},"request_id":"req_011SECRETO"}'); throw e; }
+    const texto = 'Respuesta de prueba.';
+    const finalMessage = { content:[{type:'text',text:texto}], usage:{input_tokens:1600,output_tokens:400}, model:p.model, stop_reason:'end_turn' };
+    const listeners = {};
+    const streamFalso = {
+      on: function (ev, cb) { listeners[ev] = cb; return streamFalso; },
+      finalMessage: async function () {
+        if (listeners.text) listeners.text(texto, texto);
+        return finalMessage;
+      }
+    };
+    return streamFalso;
+  }
+}; }
 A.default=A;
 require.cache[require.resolve('@anthropic-ai/sdk')] = { id:'a',filename:'a',loaded:true,exports:A,paths:[] };
 const PORT=4915;

@@ -3,10 +3,28 @@ const entorno = require('./entorno');
 const fake = require('./fake-mongo');
 require.cache[require.resolve('mongodb')] = { id:'m',filename:'m',loaded:true,exports:fake,paths:[] };
 let lentitud = 0;
-function A(){ this.messages={ create: async p => {
-  if (lentitud) await new Promise(r=>setTimeout(r,lentitud));
-  return { content:[{type:'text',text:'Respuesta de prueba.'}], usage:{input_tokens:1600,output_tokens:400}, model:p.model };
-} }; }
+function A(){ this.messages={
+  create: async p => {
+    if (lentitud) await new Promise(r=>setTimeout(r,lentitud));
+    return { content:[{type:'text',text:'Respuesta de prueba.'}], usage:{input_tokens:1600,output_tokens:400}, model:p.model };
+  },
+  // Doble de MessageStream (ver pruebas/prueba-web.js): server-saas.js ahora
+  // llama .stream() en vez de .create() para /api/chat.
+  stream: function (p) {
+    const texto = 'Respuesta de prueba.';
+    const finalMessage = { content:[{type:'text',text:texto}], usage:{input_tokens:1600,output_tokens:400}, model:p.model, stop_reason:'end_turn' };
+    const listeners = {};
+    const streamFalso = {
+      on: function (ev, cb) { listeners[ev] = cb; return streamFalso; },
+      finalMessage: async function () {
+        if (lentitud) await new Promise(r=>setTimeout(r,lentitud));
+        if (listeners.text) listeners.text(texto, texto);
+        return finalMessage;
+      }
+    };
+    return streamFalso;
+  }
+}; }
 A.default=A;
 require.cache[require.resolve('@anthropic-ai/sdk')] = { id:'a',filename:'a',loaded:true,exports:A,paths:[] };
 const PORT=4913;

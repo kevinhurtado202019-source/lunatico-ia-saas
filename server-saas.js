@@ -1203,13 +1203,38 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         }
         messagesForClaude.push({ role: 'user', content: contenidoUsuario });
 
-        const response = await claudeClient.messages.create({
+        // Streaming por SSE, encendido recien cuando llega el primer texto de
+        // verdad (no al arrancar la llamada): si Claude falla antes de eso
+        // (clave invalida, etc.) el error sigue saliendo como JSON normal con
+        // su status, igual que con .create() -- no se cambia ese contrato.
+        // Si ya se mando texto y algo se rompe a mitad de camino, el catch de
+        // abajo lo nota por res.headersSent y cierra el SSE con un evento de
+        // error, sin cobrar credito (el cobro solo pasa despues de esta linea).
+        let sseIniciado = false;
+        function iniciarSSE() {
+            if (sseIniciado) return;
+            sseIniciado = true;
+            res.writeHead(200, {
+                'Content-Type': 'text/event-stream; charset=utf-8',
+                'Cache-Control': 'no-cache, no-transform',
+                Connection: 'keep-alive',
+                'X-Accel-Buffering': 'no'
+            });
+        }
+
+        const stream = claudeClient.messages.stream({
             model: modelo.id,
             max_tokens: MAX_TOKENS_RESPUESTA,
             system: construirSystemPrompt(user, proyectoActual),
             messages: messagesForClaude,
             tools: HERRAMIENTAS_IA
         });
+        stream.on('text', (delta) => {
+            iniciarSSE();
+            res.write('data: ' + JSON.stringify({ delta }) + '\n\n');
+        });
+
+        const response = await stream.finalMessage();
 
         // Con herramientas de por medio la respuesta trae varios bloques de
         // texto intercalados con los de busqueda/lectura/codigo (p.ej. "voy a
@@ -1264,7 +1289,8 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         }
 
         const uso = response.usage || {};
-        res.json({
+        res.write('data: ' + JSON.stringify({
+            done: true,
             response: aiMessage,
             consumo: {
                 modelo: modelo.etiqueta,
@@ -1277,9 +1303,24 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
                 creditosIlimitados: ilimitado,
                 cortada: cortada
             }
-        });
+        }) + '\n\n');
+        res.end();
     } catch (error) {
-        fallo(res, 500, 'No pudimos generar la respuesta. No se te descontó ningún crédito.', error, 'chat');
+        if (res.headersSent) {
+            // Ya se le mando texto real al cliente (el SSE esta abierto): no se
+            // puede cambiar el status ahora, asi que el error viaja como evento
+            // SSE. El cobro y el guardado en Mongo, arriba, nunca se alcanzaron
+            // -- no se descuenta credito, igual que si hubiera fallado antes.
+            console.error('✗ chat (streaming):', (error && error.message) || error);
+            try {
+                res.write('data: ' + JSON.stringify({
+                    error: 'La respuesta se interrumpió a mitad de camino. No se te descontó ningún crédito.'
+                }) + '\n\n');
+            } catch (e2) { /* la conexion ya pudo haberse caido */ }
+            try { res.end(); } catch (e3) { /* idem */ }
+        } else {
+            fallo(res, 500, 'No pudimos generar la respuesta. No se te descontó ningún crédito.', error, 'chat');
+        }
     }
 });
 

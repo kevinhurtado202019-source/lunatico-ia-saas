@@ -2343,56 +2343,112 @@
     // pulsar Enter.
     var falloDeRed = false;
 
-    api('/api/chat', {
-      method: 'POST',
-      body: JSON.stringify({
-        message: mensaje,
-        modelo: $('modo').value || undefined,
-        proyectoId: proyectoActual ? proyectoActual.id : undefined,
-        imagen: adjunto && adjunto.tipo === 'imagen' ? { mediaType: adjunto.mediaType, datos: adjunto.datos } : undefined,
-        documento: adjunto && adjunto.tipo === 'documento' ? { mediaType: adjunto.mediaType, datos: adjunto.datos, nombre: adjunto.nombre } : undefined,
-        archivoTexto: adjunto && adjunto.tipo === 'texto' ? { contenido: adjunto.contenido, nombre: adjunto.nombre } : undefined,
-        archivoOficina: adjunto && adjunto.tipo === 'oficina' ? { tipo: adjunto.subtipo, datos: adjunto.datos, nombre: adjunto.nombre } : undefined,
-        archivoZip: adjunto && adjunto.tipo === 'zip' ? { datos: adjunto.datos, nombre: adjunto.nombre } : undefined
-      })
-    }).then(function (r) {
-      if (r.res.status === 402) {
-        esperando.texto.textContent = 'Te quedaste sin créditos. Compra un paquete para seguir conversando.';
-        if (yo) { yo.creditBalance = 0; pintarSaldo(); }
-        abrirPanel('paquetes');
-        return;
-      }
-      // El servidor respondio, aunque sea con error: la peticion SI llego, asi
-      // que el aviso se queda en el hilo en vez de tratarse como fallo de red.
-      if (!r.res.ok) {
-        esperando.texto.textContent =
-          (r.data && r.data.error) || 'No pudimos generar la respuesta. Inténtalo de nuevo.';
-        return;
-      }
+    var cuerpoPeticion = JSON.stringify({
+      message: mensaje,
+      modelo: $('modo').value || undefined,
+      proyectoId: proyectoActual ? proyectoActual.id : undefined,
+      imagen: adjunto && adjunto.tipo === 'imagen' ? { mediaType: adjunto.mediaType, datos: adjunto.datos } : undefined,
+      documento: adjunto && adjunto.tipo === 'documento' ? { mediaType: adjunto.mediaType, datos: adjunto.datos, nombre: adjunto.nombre } : undefined,
+      archivoTexto: adjunto && adjunto.tipo === 'texto' ? { contenido: adjunto.contenido, nombre: adjunto.nombre } : undefined,
+      archivoOficina: adjunto && adjunto.tipo === 'oficina' ? { tipo: adjunto.subtipo, datos: adjunto.datos, nombre: adjunto.nombre } : undefined,
+      archivoZip: adjunto && adjunto.tipo === 'zip' ? { datos: adjunto.datos, nombre: adjunto.nombre } : undefined
+    });
 
-      esperando.texto.innerHTML = renderizarMarkdown(r.data.response);
-      pintarEmoji(esperando.texto);
-      agregarBotonEscuchar(esperando.caja, esperando.texto);
-      agregarBotonDescargarRespuesta(esperando.caja, r.data.response);
+    var cabeceras = { 'Content-Type': 'application/json' };
+    if (token) cabeceras['Authorization'] = 'Bearer ' + token;
 
-      var c = r.data.consumo;
-      if (c) {
-        var linea = document.createElement('div');
-        linea.className = 'consumo';
-        var texto = c.creditosCobrados + ' créditos · ' + c.modelo +
-          ' · ' + c.tokensEntrada + ' entrada / ' + c.tokensSalida + ' salida';
-        if (c.busquedas) texto += ' · ' + c.busquedas + ' búsqueda' + (c.busquedas > 1 ? 's' : '') + ' web';
-        if (c.lecturasWeb) texto += ' · ' + c.lecturasWeb + ' página' + (c.lecturasWeb > 1 ? 's' : '') + ' leída' + (c.lecturasWeb > 1 ? 's' : '');
-        linea.textContent = texto;
-        esperando.caja.appendChild(linea);
-        if (yo) {
-          yo.creditBalance = c.creditBalance;
-          if (c.creditosIlimitados) yo.creditosIlimitados = true;
-          pintarSaldo();
+    // /api/chat responde por SSE: el texto llega de a pedazos (evento
+    // "delta") y al final un evento con done:true trae el mensaje completo
+    // y el consumo -- igual que antes, solo que ahora se pinta mientras
+    // llega en vez de esperar toda la respuesta de una.
+    fetch('/api/chat', { method: 'POST', headers: cabeceras, body: cuerpoPeticion })
+      .then(function (res) {
+        if (res.status === 402) {
+          esperando.texto.textContent = 'Te quedaste sin créditos. Compra un paquete para seguir conversando.';
+          if (yo) { yo.creditBalance = 0; pintarSaldo(); }
+          abrirPanel('paquetes');
+          return;
         }
-      }
-      abajo();
-    }).catch(function (err) {
+        // El servidor respondio con un error ANTES de empezar a transmitir
+        // (credito, modelo invalido, clave de Claude mala, etc.): sigue
+        // siendo un JSON normal, no un stream.
+        if (!res.ok) {
+          return res.json().catch(function () { return null; }).then(function (data) {
+            esperando.texto.textContent =
+              (data && data.error) || 'No pudimos generar la respuesta. Inténtalo de nuevo.';
+          });
+        }
+
+        var lector = res.body.getReader();
+        var decodificador = new TextDecoder();
+        var bufer = '';
+        var acumulado = '';
+        var huboContenido = false;
+
+        function procesarEvento(bloque) {
+          if (bloque.indexOf('data: ') !== 0) return;
+          var json;
+          try { json = JSON.parse(bloque.slice(6)); } catch (e) { return; }
+
+          if (json.delta) {
+            huboContenido = true;
+            acumulado += json.delta;
+            esperando.texto.innerHTML = renderizarMarkdown(acumulado);
+            abajo();
+            return;
+          }
+
+          if (json.error) {
+            esperando.texto.textContent = json.error;
+            return;
+          }
+
+          if (json.done) {
+            var textoFinal = json.response || acumulado;
+            esperando.texto.innerHTML = renderizarMarkdown(textoFinal);
+            pintarEmoji(esperando.texto);
+            agregarBotonEscuchar(esperando.caja, esperando.texto);
+            agregarBotonDescargarRespuesta(esperando.caja, textoFinal);
+
+            var c = json.consumo;
+            if (c) {
+              var linea = document.createElement('div');
+              linea.className = 'consumo';
+              var texto = c.creditosCobrados + ' créditos · ' + c.modelo +
+                ' · ' + c.tokensEntrada + ' entrada / ' + c.tokensSalida + ' salida';
+              if (c.busquedas) texto += ' · ' + c.busquedas + ' búsqueda' + (c.busquedas > 1 ? 's' : '') + ' web';
+              if (c.lecturasWeb) texto += ' · ' + c.lecturasWeb + ' página' + (c.lecturasWeb > 1 ? 's' : '') + ' leída' + (c.lecturasWeb > 1 ? 's' : '');
+              linea.textContent = texto;
+              esperando.caja.appendChild(linea);
+              if (yo) {
+                yo.creditBalance = c.creditBalance;
+                if (c.creditosIlimitados) yo.creditosIlimitados = true;
+                pintarSaldo();
+              }
+            }
+            abajo();
+          }
+        }
+
+        function leer() {
+          return lector.read().then(function (resultado) {
+            if (resultado.done) {
+              // El servidor siempre cierra con un evento "done" o "error"; si
+              // la conexion se corta antes de eso, se avisa como tal.
+              if (!huboContenido) {
+                esperando.texto.textContent = 'No pudimos generar la respuesta. Inténtalo de nuevo.';
+              }
+              return;
+            }
+            bufer += decodificador.decode(resultado.value, { stream: true });
+            var partes = bufer.split('\n\n');
+            bufer = partes.pop();
+            partes.forEach(procesarEvento);
+            return leer();
+          });
+        }
+        return leer();
+      }).catch(function (err) {
       falloDeRed = true;
       mio.caja.remove();
       esperando.caja.remove();

@@ -28,6 +28,30 @@ function AnthropicFake(opts) {
                 content: [{ type: 'text', text: 'Respuesta simulada para la prueba.' }],
                 usage: { input_tokens: 1600, output_tokens: 400 }
             };
+        },
+        // Doble minimo de MessageStream: registra el listener de 'text' y,
+        // al pedir finalMessage(), lo dispara una vez con el texto completo
+        // antes de resolver -- alcanza para probar el cableado SSE real
+        // (server-saas.js solo usa .on('text', ...) y .finalMessage()).
+        stream: function (params) {
+            AnthropicFake.ultimaLlamada = params;
+            const texto = 'Respuesta simulada para la prueba.';
+            const finalMessage = {
+                id: 'msg_fake', type: 'message', role: 'assistant',
+                model: params.model,
+                content: [{ type: 'text', text: texto }],
+                usage: { input_tokens: 1600, output_tokens: 400 },
+                stop_reason: 'end_turn'
+            };
+            const listeners = {};
+            const streamFalso = {
+                on: function (evento, cb) { listeners[evento] = cb; return streamFalso; },
+                finalMessage: async function () {
+                    if (listeners.text) listeners.text(texto, texto);
+                    return finalMessage;
+                }
+            };
+            return streamFalso;
         }
     };
 }
