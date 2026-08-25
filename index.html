@@ -758,6 +758,51 @@
     margin: 10px auto 0; max-width: 66ch;
   }
 
+  /* --------- celebracion de compra --------- */
+
+  .celebracion {
+    position: fixed; inset: 0; z-index: 60;
+    background: rgba(5,7,12,.82);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity .25s;
+    overflow: hidden;
+  }
+  .celebracion.activa { opacity: 1; pointer-events: auto; }
+
+  .confeti { position: absolute; inset: 0; overflow: hidden; }
+  .pieza-confeti {
+    position: absolute; top: -10%;
+    animation-name: caer-confeti; animation-timing-function: ease-in;
+    animation-iteration-count: 1; animation-fill-mode: forwards;
+    will-change: transform, opacity;
+  }
+  @keyframes caer-confeti {
+    0%   { transform: translateY(0) rotate(0deg); opacity: 1; }
+    100% { transform: translateY(115vh) rotate(340deg); opacity: .9; }
+  }
+
+  .mensaje-celebracion {
+    position: relative; z-index: 1; text-align: center; max-width: 380px;
+    background: var(--superficie); border: 1px solid var(--borde);
+    border-radius: 20px; padding: 40px 32px 32px;
+    box-shadow: var(--sombra);
+    animation: aparecer-celebracion .4s cubic-bezier(.22,.9,.35,1.2);
+  }
+  @keyframes aparecer-celebracion {
+    0%   { transform: scale(.85); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  .emoji-celebracion { font-size: 52px; margin-bottom: 6px; }
+  .mensaje-celebracion h2 {
+    font-family: var(--display); font-weight: 700; font-size: 26px; margin: 0 0 10px;
+  }
+  .mensaje-celebracion p { color: var(--suave); font-size: 15px; margin: 0 0 24px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pieza-confeti { display: none; }
+    .mensaje-celebracion { animation: none; }
+  }
+
   /* --------- panel lateral --------- */
 
   .velo {
@@ -1200,6 +1245,16 @@
       </div>
       <p class="nota-pie" id="notaPie">Enter para enviar · Shift + Enter para salto de línea</p>
     </div>
+  </div>
+</div>
+
+<div class="celebracion" id="celebracionCompra" role="status" aria-live="polite">
+  <div class="confeti" id="confetiContenedor" aria-hidden="true"></div>
+  <div class="mensaje-celebracion">
+    <div class="emoji-celebracion" aria-hidden="true">🎉</div>
+    <h2>¡Felicidades!</h2>
+    <p>Acabas de comprar tus créditos. Ya se están abonando a tu cuenta.</p>
+    <button type="button" class="btn btn-luna btn-luna-auto" onclick="cerrarCelebracion()">Genial</button>
   </div>
 </div>
 
@@ -2837,10 +2892,73 @@
     }, 300);
   });
 
+  // Fiesta de confeti + sonido cuando se confirma una compra. El sonido se
+  // sintetiza con Web Audio (un "ta-da" de 4 notas) en vez de un archivo de
+  // musica real: no hay licencia que gestionar, y el navegador de todos
+  // modos bloquea el autoplay de audio la mayoria de las veces en este punto
+  // (se vuelve del checkout, no es un clic directo) -- si el navegador lo
+  // bloquea, el try/catch lo deja pasar en silencio, la fiesta visual se ve
+  // igual.
+  var alCerrarCelebracion = null;
+
+  window.celebrarCompra = function (alTerminar) {
+    alCerrarCelebracion = alTerminar || null;
+    var contenedor = $('confetiContenedor');
+    contenedor.innerHTML = '';
+    if (!reducirMovimiento) {
+      var simbolos = ['🎉', '🎊', '🎁', '✨', '💚'];
+      for (var i = 0; i < 46; i++) {
+        var pieza = document.createElement('span');
+        pieza.className = 'pieza-confeti';
+        pieza.textContent = simbolos[Math.floor(Math.random() * simbolos.length)];
+        pieza.style.left = Math.random() * 100 + '%';
+        pieza.style.animationDelay = (Math.random() * 1.1) + 's';
+        pieza.style.animationDuration = (2 + Math.random() * 1.8) + 's';
+        pieza.style.fontSize = (16 + Math.random() * 20) + 'px';
+        contenedor.appendChild(pieza);
+      }
+    }
+    $('celebracionCompra').classList.add('activa');
+    sonidoCelebracion();
+    setTimeout(function () { window.cerrarCelebracion(); }, 4500);
+  };
+
+  window.cerrarCelebracion = function () {
+    $('celebracionCompra').classList.remove('activa');
+    var seguir = alCerrarCelebracion;
+    alCerrarCelebracion = null;
+    if (seguir) seguir();
+  };
+
+  function sonidoCelebracion() {
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      var ctx = new Ctx();
+      var notas = [523.25, 659.25, 783.99, 1046.50]; // do-mi-sol-do agudo
+      notas.forEach(function (frecuencia, i) {
+        var osc = ctx.createOscillator();
+        var ganancia = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = frecuencia;
+        var inicio = ctx.currentTime + i * 0.12;
+        ganancia.gain.setValueAtTime(0, inicio);
+        ganancia.gain.linearRampToValueAtTime(.2, inicio + .02);
+        ganancia.gain.exponentialRampToValueAtTime(.001, inicio + .5);
+        osc.connect(ganancia);
+        ganancia.connect(ctx.destination);
+        osc.start(inicio);
+        osc.stop(inicio + .5);
+      });
+    } catch (e) {}
+  }
+
   // Al volver del checkout, el webhook ya habrá abonado los créditos.
   if (new URLSearchParams(location.search).get('compra') && token) {
     setTimeout(function () {
-      cargarCuenta().then(function () { abrirPanel('cuenta'); });
+      cargarCuenta().then(function () {
+        celebrarCompra(function () { abrirPanel('cuenta'); });
+      });
     }, 1800);
   }
 })();

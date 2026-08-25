@@ -137,6 +137,26 @@ la creó, LunaticoIA responda con el nombre del dueño (Kevin David González
 Hurtado, de Neiva, Huila). Es una respuesta fija, no algo que el modelo deba
 inventar o adivinar.
 
+### Celebración al confirmar una compra (25 de agosto de 2026)
+
+Cuando se vuelve del checkout de Wompi (`?compra=REFERENCIA` en la URL) y ya
+se refrescó el saldo, aparece un overlay a pantalla completa con confeti
+cayendo (emojis 🎉🎊🎁✨💚 con posición/velocidad aleatorias por CSS), el
+mensaje "¡Felicidades! Acabas de comprar tus créditos. Ya se están abonando
+a tu cuenta", y un sonido corto de 4 notas. Se cierra solo a los 4.5s o con
+el botón "Genial", y al cerrarse abre el panel de "Mi cuenta" para que se
+vea el saldo nuevo — mismo comportamiento de antes, solo que ahora con la
+fiesta de por medio.
+
+El "sonido de fondo" que pidió el dueño se sintetiza con Web Audio API (un
+acorde de 4 notas ascendentes) en vez de un archivo de música real: no hay
+que gestionar licencias, y de todos modos el navegador bloquea el autoplay
+de audio casi siempre en este punto exacto (se vuelve de un checkout
+externo, no es un clic directo del usuario dentro de la página) — si el
+navegador lo bloquea, el `try/catch` lo deja pasar en silencio y la fiesta
+visual se ve igual. Respeta `prefers-reduced-motion` (sin confeti animado
+para quien lo tenga activado).
+
 ### El chat dejó de responder por acumular adjuntos en el historial (27 de agosto de 2026)
 
 Caso real: una cuenta que había probado varios adjuntos (imagen, PDF, docx,
