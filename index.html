@@ -2585,6 +2585,7 @@
                 ' · ' + c.tokensEntrada + ' entrada / ' + c.tokensSalida + ' salida';
               if (c.busquedas) texto += ' · ' + c.busquedas + ' búsqueda' + (c.busquedas > 1 ? 's' : '') + ' web';
               if (c.lecturasWeb) texto += ' · ' + c.lecturasWeb + ' página' + (c.lecturasWeb > 1 ? 's' : '') + ' leída' + (c.lecturasWeb > 1 ? 's' : '');
+              if (c.imagenes) texto += ' · ' + c.imagenes + ' imagen' + (c.imagenes > 1 ? 'es' : '') + ' buscada' + (c.imagenes > 1 ? 's' : '');
               linea.textContent = texto;
               esperando.caja.appendChild(linea);
               if (yo) {

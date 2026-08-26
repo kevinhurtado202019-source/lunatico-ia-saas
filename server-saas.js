@@ -51,6 +51,12 @@ const claudeClient = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY });
 const TOKENS_POR_CREDITO = 1000;
 const PESO_SALIDA = 5;
 
+// Igual que Wompi y el correo: si no hay clave de Google Custom Search
+// configurada, la funcionalidad de buscar fotos reales se apaga sola (ni se
+// ofrece la herramienta, ni el system prompt le dice que la use) en vez de
+// romperse.
+const IMAGEN_CONFIGURADA = Boolean(process.env.GOOGLE_SEARCH_API_KEY && process.env.GOOGLE_SEARCH_CX);
+
 // Sin esto el modelo confunde su sandbox de code_execution con el computador
 // de quien le escribe: llega a decir "ya lo exporté a tus Descargas" cuando
 // eso es imposible (el sandbox no tiene ningun acceso al dispositivo de la
@@ -129,19 +135,20 @@ const SYSTEM_PROMPT_BASE = [
         'mas y hazlo directo, sin pedir permiso para cada paso. Solo paras ' +
         'cuando ya tienes con que dar una respuesta completa, o cuando se ' +
         'te acaban los usos disponibles de una herramienta.',
+].concat(IMAGEN_CONFIGURADA ? [
     '',
     'Si te piden una imagen o foto de algo real (una ciudad, un lugar, una ' +
         'persona publica, un animal, un objeto, etc.), NO la inventes ni la ' +
-        'generes: usa web_search para encontrar una foto real en internet y ' +
-        'ponla en tu respuesta con sintaxis de imagen en markdown: ' +
-        '![descripcion](URL-de-la-imagen). Preferi fuentes con URLs de ' +
-        'imagen estables y directas (que terminen en .jpg, .jpeg, .png o ' +
-        '.webp), como Wikipedia o Wikimedia Commons. Usa SIEMPRE una URL que ' +
-        'de verdad viste en los resultados de la busqueda -- jamas inventes ' +
-        'o adivines una URL de imagen, porque si no existe se ve rota en el ' +
-        'chat. Si buscaste y no encontraste ninguna foto real que sirva, ' +
-        'dilo con honestidad en vez de poner una URL inventada.'
-].join('\n');
+        'generes: usa la herramienta buscar_imagen, que te devuelve URLs de ' +
+        'fotos reales que de verdad existen. Elegi la mas apropiada de los ' +
+        'resultados y ponla en tu respuesta con sintaxis de imagen en ' +
+        'markdown, en su propia linea: ![descripcion](URL-de-la-imagen). Usa ' +
+        'SIEMPRE una URL que la herramienta te devolvio -- jamas inventes o ' +
+        'adivines una URL de imagen, porque si no existe se ve rota en el ' +
+        'chat. Si la busqueda no encontro ninguna foto real que sirva, dilo ' +
+        'con honestidad en vez de poner una URL inventada o mandar a la ' +
+        'persona a buscarla ella misma.'
+] : []).join('\n');
 
 const MAX_CARACTERES_INSTRUCCIONES = 600;
 const MAX_CARACTERES_PROYECTO = 60;
@@ -181,6 +188,96 @@ const HERRAMIENTAS_IA = [
 // de horas de Anthropic, muy por encima de lo que un chat como este va a
 // usar, y web_fetch no cobra nada aparte de los tokens que consume.
 const CREDITOS_POR_BUSQUEDA = 10;
+
+// ---------------------------------------------------------------------------
+// Buscar fotos reales (Google Custom Search, solo imagenes)
+//
+// A diferencia de web_search/web_fetch (que ejecuta Anthropic del otro lado),
+// esta es una herramienta "de cliente": cuando la IA la pide, ESTE servidor
+// tiene que llamar a Google, meter el resultado de vuelta en la conversacion
+// y volver a llamar a Claude -- por eso el ciclo de /api/chat tiene un lazo
+// (verlo mas abajo), a diferencia de las herramientas server-side de arriba
+// que resuelven todo en una sola llamada.
+//
+// web_fetch NO sirve para esto: solo devuelve texto/PDF, nunca URLs de
+// imagenes (documentado por Anthropic) -- probado en produccion el 26 de
+// agosto: el modelo admitio que no tenia ninguna URL de imagen real
+// disponible pese a haber buscado. De ahi la necesidad de esta herramienta
+// aparte.
+// ---------------------------------------------------------------------------
+
+const HERRAMIENTA_BUSCAR_IMAGEN = {
+    name: 'buscar_imagen',
+    description: 'Busca fotos reales en internet (Google Imagenes) sobre algo puntual -- una ' +
+        'ciudad, un lugar, una persona publica, un animal, un objeto, etc. -- y devuelve ' +
+        'URLs de imagenes reales y verificadas, listas para usar. Usala siempre que te ' +
+        'pidan una imagen o foto de algo real; nunca inventes una URL por tu cuenta.',
+    input_schema: {
+        type: 'object',
+        properties: {
+            consulta: {
+                type: 'string',
+                description: 'Que buscar, en pocas palabras y en el idioma que mejor describa el ' +
+                    'tema (ej: "ciudad de Neiva Huila Colombia").'
+            }
+        },
+        required: ['consulta']
+    }
+};
+
+const MAX_RESULTADOS_BUSCAR_IMAGEN = 5;
+
+// Formatos que de verdad se pueden mostrar con <img> en el chat y descargar
+// despues -- Google a veces devuelve SVG o BMP, que se filtran. Google
+// entrega el mime real de cada resultado (mas confiable que adivinar por la
+// URL), con la extension del archivo como respaldo si por algo faltara.
+const MIMES_IMAGEN_UTILES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const EXTENSIONES_IMAGEN_UTILES = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+
+async function buscarImagenGoogle(consulta) {
+    const params = new URLSearchParams({
+        key: process.env.GOOGLE_SEARCH_API_KEY,
+        cx: process.env.GOOGLE_SEARCH_CX,
+        q: String(consulta || '').slice(0, 300),
+        searchType: 'image',
+        num: String(MAX_RESULTADOS_BUSCAR_IMAGEN),
+        safe: 'active'
+    });
+    const controlador = new AbortController();
+    const tiempoAgotado = setTimeout(() => controlador.abort(), 10000);
+    try {
+        const respuesta = await fetch('https://www.googleapis.com/customsearch/v1?' + params.toString(), {
+            signal: controlador.signal
+        });
+        if (!respuesta.ok) {
+            throw new Error('Google Custom Search respondio ' + respuesta.status);
+        }
+        const datos = await respuesta.json();
+        const items = Array.isArray(datos.items) ? datos.items : [];
+        return items
+            .filter((it) => {
+                if (it.mime) return MIMES_IMAGEN_UTILES.indexOf(String(it.mime).toLowerCase()) !== -1;
+                const ext = String(it.link || '').split('.').pop().split('?')[0].toLowerCase();
+                return EXTENSIONES_IMAGEN_UTILES.indexOf(ext) !== -1;
+            })
+            .slice(0, MAX_RESULTADOS_BUSCAR_IMAGEN)
+            .map((it) => ({ url: it.link, titulo: it.title || '' }));
+    } finally {
+        clearTimeout(tiempoAgotado);
+    }
+}
+
+// Precio real de Google Custom Search: $5 USD cada 1.000 llamadas = $0,005 ->
+// 5 creditos al tipo de cambio de Rapido. Mismo criterio que
+// CREDITOS_POR_BUSQUEDA: se cobra al costo, sin margen aparte (el margen ya
+// esta en el multiplicador de tokens de cada modelo).
+const CREDITOS_POR_IMAGEN = 5;
+const MAX_RONDAS_BUSCAR_IMAGEN = 3;
+
+// Lista final que se le manda a Claude: las de siempre + buscar_imagen, solo
+// si esta configurada (si no, ni se ofrece -- asi el modelo no puede
+// "elegirla" y quedarse pegado esperando que exista).
+const HERRAMIENTAS_PARA_CHAT = HERRAMIENTAS_IA.concat(IMAGEN_CONFIGURADA ? [HERRAMIENTA_BUSCAR_IMAGEN] : []);
 
 // Imagenes adjuntas al chat (para que el usuario muestre capturas, disenos o
 // mockups de su proyecto). Van directo en el mensaje como bloque "image", sin
@@ -1409,32 +1506,76 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             });
         }
 
-        const stream = claudeClient.messages.stream({
-            model: modelo.id,
-            max_tokens: MAX_TOKENS_RESPUESTA,
-            system: construirSystemPrompt(user, proyectoActual),
-            messages: messagesForClaude,
-            tools: HERRAMIENTAS_IA
-        });
-        stream.on('text', (delta) => {
-            iniciarSSE();
-            res.write('data: ' + JSON.stringify({ delta }) + '\n\n');
-        });
-
-        const response = await stream.finalMessage();
-
-        // Con herramientas de por medio la respuesta trae varios bloques de
-        // texto intercalados con los de busqueda/lectura/codigo (p.ej. "voy a
-        // buscar..." + resultados + la respuesta final): hay que juntarlos
-        // todos, no solo quedarse con el primero.
+        // buscar_imagen es una herramienta "de cliente": a diferencia de
+        // web_search/web_fetch/code_execution (que Anthropic ejecuta solo de
+        // su lado), cuando Claude la pide este servidor tiene que buscar de
+        // verdad, devolverle el resultado en un tool_result, y volver a
+        // llamarlo -- por eso este lazo, en vez de una sola llamada. Tope de
+        // MAX_RONDAS_BUSCAR_IMAGEN + 1 llamadas totales a la API para que
+        // nunca quede dando vueltas sin fin ni disparando el gasto.
+        let mensajesRonda = messagesForClaude;
         let aiMessage = '';
-        if (response.content && Array.isArray(response.content)) {
-            aiMessage = response.content
-                .filter((i) => i.type === 'text')
-                .map((i) => i.text)
-                .join('');
+        let response = null;
+        let imagenesLlamadas = 0;
+        const usoAcumulado = { input_tokens: 0, output_tokens: 0, server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 } };
+        const MAX_RONDAS_TOTAL = MAX_RONDAS_BUSCAR_IMAGEN + 1;
+
+        for (let ronda = 1; ronda <= MAX_RONDAS_TOTAL; ronda++) {
+            const stream = claudeClient.messages.stream({
+                model: modelo.id,
+                max_tokens: MAX_TOKENS_RESPUESTA,
+                system: construirSystemPrompt(user, proyectoActual),
+                messages: mensajesRonda,
+                tools: HERRAMIENTAS_PARA_CHAT
+            });
+            stream.on('text', (delta) => {
+                iniciarSSE();
+                res.write('data: ' + JSON.stringify({ delta }) + '\n\n');
+            });
+
+            response = await stream.finalMessage();
+
+            // Con herramientas de por medio la respuesta trae varios bloques
+            // de texto intercalados con los de busqueda/lectura/codigo (p.ej.
+            // "voy a buscar..." + resultados + la respuesta final): hay que
+            // juntarlos todos, no solo quedarse con el primero. Se van
+            // acumulando a traves de las rondas tambien.
+            if (response.content && Array.isArray(response.content)) {
+                aiMessage += response.content.filter((i) => i.type === 'text').map((i) => i.text).join('');
+            }
+
+            const usoRonda = response.usage || {};
+            usoAcumulado.input_tokens += usoRonda.input_tokens || 0;
+            usoAcumulado.output_tokens += usoRonda.output_tokens || 0;
+            usoAcumulado.server_tool_use.web_search_requests += (usoRonda.server_tool_use && usoRonda.server_tool_use.web_search_requests) || 0;
+            usoAcumulado.server_tool_use.web_fetch_requests += (usoRonda.server_tool_use && usoRonda.server_tool_use.web_fetch_requests) || 0;
+
+            const contenidoRonda = Array.isArray(response.content) ? response.content : [];
+            const llamadasImagen = contenidoRonda.filter((b) => b.type === 'tool_use' && b.name === 'buscar_imagen');
+            if (!llamadasImagen.length) break; // respuesta final normal, sin pedir mas herramientas
+            if (ronda === MAX_RONDAS_TOTAL) break; // se acabaron las rondas -- se corta aca, sin resolver el tool_use pendiente
+
+            mensajesRonda = mensajesRonda.concat([{ role: 'assistant', content: contenidoRonda }]);
+            const resultadosTool = await Promise.all(llamadasImagen.map(async (llamada) => {
+                imagenesLlamadas++;
+                const consulta = (llamada.input && llamada.input.consulta) || '';
+                try {
+                    const resultados = await buscarImagenGoogle(consulta);
+                    const texto = resultados.length
+                        ? 'Resultados de imagenes para "' + consulta + '":\n' +
+                            resultados.map((r, idx) => (idx + 1) + '. ' + r.url + (r.titulo ? ' -- "' + r.titulo + '"' : '')).join('\n')
+                        : 'No se encontraron fotos reales para esa busqueda.';
+                    return { type: 'tool_result', tool_use_id: llamada.id, content: texto };
+                } catch (errorBusqueda) {
+                    console.error('✗ buscar_imagen:', (errorBusqueda && errorBusqueda.message) || errorBusqueda);
+                    return {
+                        type: 'tool_result', tool_use_id: llamada.id, is_error: true,
+                        content: 'La busqueda de imagenes fallo por un problema tecnico. Avisale a la persona que no se pudo buscar la foto ahora mismo.'
+                    };
+                }
+            }));
+            mensajesRonda = mensajesRonda.concat([{ role: 'user', content: resultadosTool }]);
         }
-        if (!aiMessage) throw new Error('Invalid response from Claude API');
 
         // El system prompt ya pide "cero emojis" por defecto, pero el modelo
         // (sobre todo Rapido) a veces los pone igual -- se filtran aca como
@@ -1447,15 +1588,19 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         );
         if (!tieneInstruccionesPropias) aiMessage = quitarEmojis(aiMessage);
 
-        // Si la respuesta se corto (llego al limite de tokens, o Anthropic la
-        // pauso a mitad de una busqueda/ejecucion de codigo larga) el usuario
-        // se quedaba viendo un mensaje a medias sin ninguna pista de que
-        // paso -- como si la IA se hubiera quedado pegada. Se avisa explicito.
-        const cortada = response.stop_reason === 'max_tokens' || response.stop_reason === 'pause_turn';
+        // Si la respuesta se corto (llego al limite de tokens, Anthropic la
+        // pauso a mitad de una busqueda/ejecucion de codigo larga, o se
+        // agotaron las rondas de buscar_imagen sin llegar a una respuesta
+        // final) el usuario se quedaba viendo un mensaje a medias sin ninguna
+        // pista de que paso -- como si la IA se hubiera quedado pegada. Se
+        // avisa explicito.
+        const rondasAgotadas = response.stop_reason === 'tool_use';
+        const cortada = response.stop_reason === 'max_tokens' || response.stop_reason === 'pause_turn' || rondasAgotadas;
+        if (!aiMessage && !cortada) throw new Error('Invalid response from Claude API');
         if (cortada) {
             aiMessage += (aiMessage ? '\n\n' : '') + '⚠️ *La respuesta se cortó antes de terminar' +
-                (response.stop_reason === 'max_tokens'
-                    ? ' (llegó al límite de longitud)'
+                (response.stop_reason === 'max_tokens' ? ' (llegó al límite de longitud)'
+                    : rondasAgotadas ? ' (se hicieron demasiadas búsquedas de imagen en un mismo mensaje)'
                     : ' (una búsqueda o ejecución de código larga quedó a medias)') +
                 '. Escribe "continúa" para que siga.*';
         }
@@ -1463,7 +1608,9 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         // Se cobra DESPUÉS de una respuesta correcta: si la API falla, el
         // usuario no pierde saldo. Las cuentas con creditosIlimitados nunca
         // bajan de saldo (pensadas para el propio creador de LunaticoIA).
-        const cobro = creditosDe(response.usage, modelo.multiplicador);
+        // Las busquedas de imagen se cobran aparte porque Google cobra por
+        // fuera de Anthropic, igual que CREDITOS_POR_BUSQUEDA con web_search.
+        const cobro = creditosDe(usoAcumulado, modelo.multiplicador) + imagenesLlamadas * CREDITOS_POR_IMAGEN;
         const nuevoSaldo = ilimitado ? user.creditBalance : Math.max(0, user.creditBalance - cobro);
 
         // Se guarda el mismo contenido que se le mando a Claude (con imagen o
@@ -1497,16 +1644,16 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             }
         }
 
-        const uso = response.usage || {};
         res.write('data: ' + JSON.stringify({
             done: true,
             response: aiMessage,
             consumo: {
                 modelo: modelo.etiqueta,
-                tokensEntrada: uso.input_tokens != null ? uso.input_tokens : null,
-                tokensSalida: uso.output_tokens != null ? uso.output_tokens : null,
-                busquedas: (uso.server_tool_use && uso.server_tool_use.web_search_requests) || 0,
-                lecturasWeb: (uso.server_tool_use && uso.server_tool_use.web_fetch_requests) || 0,
+                tokensEntrada: usoAcumulado.input_tokens,
+                tokensSalida: usoAcumulado.output_tokens,
+                busquedas: usoAcumulado.server_tool_use.web_search_requests,
+                lecturasWeb: usoAcumulado.server_tool_use.web_fetch_requests,
+                imagenes: imagenesLlamadas,
                 creditosCobrados: cobro,
                 creditBalance: nuevoSaldo,
                 creditosIlimitados: ilimitado,
