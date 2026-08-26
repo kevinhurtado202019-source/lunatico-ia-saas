@@ -253,6 +253,24 @@ const SITIOS_IMAGEN_CONFIABLES = [
 ];
 const FILTRO_SITIOS_CONFIABLES = SITIOS_IMAGEN_CONFIABLES.map((s) => 'site:' + s).join(' OR ');
 
+// Wikipedia/Wikimedia a veces agregan parametros de rastreo (utm_source,
+// utm_campaign...) a sus propias URLs de imagen -- probado en produccion el
+// 26 de agosto: la imagen nunca cargo en el navegador de un usuario real
+// pese a que la URL respondia perfecto por fuera (probable bloqueador de
+// anuncios/privacidad, que bloquea por patron cualquier URL con "utm_*" sin
+// importar que sea una imagen real). Se limpian esos parametros de rastreo
+// antes de usar la URL; el resto de la query string (si la hay) se respeta.
+const PARAMETROS_RASTREO = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'gclid'];
+function limpiarUrlImagen(url) {
+    try {
+        const u = new URL(url);
+        PARAMETROS_RASTREO.forEach((p) => u.searchParams.delete(p));
+        return u.href;
+    } catch (e) {
+        return url;
+    }
+}
+
 async function buscarImagenSerper(consulta) {
     const controlador = new AbortController();
     const tiempoAgotado = setTimeout(() => controlador.abort(), 10000);
@@ -274,7 +292,7 @@ async function buscarImagenSerper(consulta) {
             const ext = String(it.imageUrl || '').split('.').pop().split('?')[0].toLowerCase();
             return EXTENSIONES_IMAGEN_BLOQUEADAS.indexOf(ext) === -1;
         });
-        const finales = filtrados.slice(0, MAX_RESULTADOS_BUSCAR_IMAGEN).map((it) => ({ url: it.imageUrl, titulo: it.title || '' }));
+        const finales = filtrados.slice(0, MAX_RESULTADOS_BUSCAR_IMAGEN).map((it) => ({ url: limpiarUrlImagen(it.imageUrl), titulo: it.title || '' }));
         console.log('buscar_imagen "' + consulta + '": ' + items.length + ' resultados de Serper, ' + filtrados.length + ' pasaron el filtro. URLs devueltas:\n' +
             finales.map((f) => '  ' + f.url).join('\n'));
         return finales;
