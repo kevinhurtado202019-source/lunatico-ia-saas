@@ -128,7 +128,19 @@ const SYSTEM_PROMPT_BASE = [
         '"¿reviso otra fuente?": decide tu misma si hace falta profundizar ' +
         'mas y hazlo directo, sin pedir permiso para cada paso. Solo paras ' +
         'cuando ya tienes con que dar una respuesta completa, o cuando se ' +
-        'te acaban los usos disponibles de una herramienta.'
+        'te acaban los usos disponibles de una herramienta.',
+    '',
+    'Si te piden una imagen o foto de algo real (una ciudad, un lugar, una ' +
+        'persona publica, un animal, un objeto, etc.), NO la inventes ni la ' +
+        'generes: usa web_search para encontrar una foto real en internet y ' +
+        'ponla en tu respuesta con sintaxis de imagen en markdown: ' +
+        '![descripcion](URL-de-la-imagen). Preferi fuentes con URLs de ' +
+        'imagen estables y directas (que terminen en .jpg, .jpeg, .png o ' +
+        '.webp), como Wikipedia o Wikimedia Commons. Usa SIEMPRE una URL que ' +
+        'de verdad viste en los resultados de la busqueda -- jamas inventes ' +
+        'o adivines una URL de imagen, porque si no existe se ve rota en el ' +
+        'chat. Si buscaste y no encontraste ninguna foto real que sirva, ' +
+        'dilo con honestidad en vez de poner una URL inventada.'
 ].join('\n');
 
 const MAX_CARACTERES_INSTRUCCIONES = 600;
@@ -612,6 +624,12 @@ const compartirLimiter = rateLimit({
     windowMs: 60 * 60 * 1000, max: 30,
     standardHeaders: true, legacyHeaders: false,
     message: { error: 'Demasiados links compartidos. Espera un poco.' }
+});
+
+const imagenLimiter = rateLimit({
+    windowMs: 10 * 60 * 1000, max: 30,
+    standardHeaders: true, legacyHeaders: false,
+    message: { error: 'Demasiadas descargas de imagen. Espera un momento.' }
 });
 
 // ---------------------------------------------------------------------------
@@ -1562,6 +1580,81 @@ app.get('/api/compartido/:codigo', async (req, res) => {
         res.json({ mensajeUsuario: doc.mensajeUsuario, respuestaIA: doc.respuestaIA, creadoEn: doc.createdAt });
     } catch (error) {
         fallo(res, 500, 'No pudimos cargar esta respuesta compartida.', error, 'compartido');
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Descargar una imagen que la IA encontro en la web (boton "Descargar
+// imagen" del chat). Pasa por el servidor -- no directo del navegador al
+// sitio de origen -- para poder forzar la descarga (Content-Disposition)
+// aunque ese sitio no lo permita, y para no exponerle la URL cruda al
+// navegador de quien la pide. Bloquea IPs privadas/locales para que esto no
+// sirva de puente hacia la red interna de Railway u otros servicios.
+// ---------------------------------------------------------------------------
+
+const EXTENSION_POR_TIPO_IMAGEN = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif'
+};
+const MAX_BYTES_IMAGEN_DESCARGA = 15 * 1024 * 1024;
+
+function hostPrivadoOLocal(hostname) {
+    const h = hostname.toLowerCase();
+    if (h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal')) return true;
+    // IPv4 privada/loopback/enlace-local, e IPv6 loopback/enlace-local (::1, fe80::, fc00::/7)
+    return /^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(h) ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(h) ||
+        h === '::1' || h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd');
+}
+
+app.get('/api/descargar-imagen', imagenLimiter, authenticateToken, async (req, res) => {
+    const urlCruda = req.query.url;
+    let destino;
+    try {
+        destino = new URL(String(urlCruda || ''));
+    } catch (e) {
+        return res.status(400).json({ error: 'URL de imagen inválida.' });
+    }
+    if (destino.protocol !== 'https:' && destino.protocol !== 'http:') {
+        return res.status(400).json({ error: 'URL de imagen inválida.' });
+    }
+    if (hostPrivadoOLocal(destino.hostname)) {
+        return res.status(400).json({ error: 'Esa dirección no está permitida.' });
+    }
+
+    const controlador = new AbortController();
+    const tiempoAgotado = setTimeout(() => controlador.abort(), 10000);
+    try {
+        const respuestaOrigen = await fetch(destino.href, { signal: controlador.signal, redirect: 'follow' });
+        clearTimeout(tiempoAgotado);
+        if (!respuestaOrigen.ok) {
+            return res.status(502).json({ error: 'No pudimos descargar esa imagen.' });
+        }
+        const tipo = (respuestaOrigen.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+        const extension = EXTENSION_POR_TIPO_IMAGEN[tipo];
+        if (!extension) {
+            return res.status(415).json({ error: 'Ese enlace no es una imagen descargable.' });
+        }
+        const largo = Number(respuestaOrigen.headers.get('content-length') || 0);
+        if (largo && largo > MAX_BYTES_IMAGEN_DESCARGA) {
+            return res.status(413).json({ error: 'Esa imagen es demasiado grande.' });
+        }
+
+        res.setHeader('Content-Type', tipo);
+        res.setHeader('Content-Disposition', `attachment; filename="lunaticoia.${extension}"`);
+
+        let recibidos = 0;
+        for await (const trozo of respuestaOrigen.body) {
+            recibidos += trozo.length;
+            if (recibidos > MAX_BYTES_IMAGEN_DESCARGA) {
+                res.destroy();
+                return;
+            }
+            res.write(trozo);
+        }
+        res.end();
+    } catch (error) {
+        clearTimeout(tiempoAgotado);
+        if (!res.headersSent) fallo(res, 502, 'No pudimos descargar esa imagen.', error, 'descargar-imagen');
     }
 });
 
