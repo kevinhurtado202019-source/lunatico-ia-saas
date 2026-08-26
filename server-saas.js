@@ -458,6 +458,26 @@ function quitarEmojis(texto) {
         .trimEnd();
 }
 
+// Respaldo garantizado, igual que quitarEmojis: el system prompt le prohibe
+// explicitamente inventar URLs de imagen, pero probado en produccion el 26
+// de agosto que el modelo (sobre todo Rapido) a veces lo hace igual --
+// copia el patron de una URL real que vio antes en el historial de la
+// conversacion y arma una parecida pero falsa (404 real, comprobado). Esto
+// quita cualquier imagen cuya URL no venga de una llamada real a
+// buscar_imagen en ESTE mismo mensaje, en vez de confiar ciegamente en el
+// modelo.
+const REGEX_IMAGEN_MARKDOWN = /^[ \t]*!\[([^\]]*)\]\((\S+)\)[ \t]*$/gm;
+function quitarImagenesInventadas(texto, urlsValidas) {
+    if (!urlsValidas.size) {
+        // No hubo ninguna busqueda real de imagen en este mensaje: cualquier
+        // ![]() que aparezca es, por definicion, inventado.
+        return texto.replace(REGEX_IMAGEN_MARKDOWN, '').replace(/\n{3,}/g, '\n\n').trim();
+    }
+    return texto.replace(REGEX_IMAGEN_MARKDOWN, (bloque, alt, url) => {
+        return urlsValidas.has(url) ? bloque : '';
+    }).replace(/\n{3,}/g, '\n\n').trim();
+}
+
 // El detalle del fallo va al log; al cliente solo un mensaje util. Antes se
 // devolvia error.message tal cual, y el usuario llegaba a ver el JSON de la
 // API de Anthropic con su request_id dentro del chat.
@@ -1551,6 +1571,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         let aiMessage = '';
         let response = null;
         let imagenesLlamadas = 0;
+        const urlsImagenValidas = new Set();
         const usoAcumulado = { input_tokens: 0, output_tokens: 0, server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 } };
         const MAX_RONDAS_TOTAL = MAX_RONDAS_BUSCAR_IMAGEN + 1;
 
@@ -1595,6 +1616,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
                 const consulta = (llamada.input && llamada.input.consulta) || '';
                 try {
                     const resultados = await buscarImagenSerper(consulta);
+                    resultados.forEach((r) => urlsImagenValidas.add(r.url));
                     const texto = resultados.length
                         ? 'Resultados de imagenes para "' + consulta + '":\n' +
                             resultados.map((r, idx) => (idx + 1) + '. ' + r.url + (r.titulo ? ' -- "' + r.titulo + '"' : '')).join('\n')
@@ -1609,6 +1631,15 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
                 }
             }));
             mensajesRonda = mensajesRonda.concat([{ role: 'user', content: resultadosTool }]);
+        }
+
+        const teniaContenidoAntes = !!aiMessage.trim();
+        aiMessage = quitarImagenesInventadas(aiMessage, urlsImagenValidas);
+        // Si lo unico que habia era una imagen inventada, no dejar el mensaje
+        // vacio (eso se veria como una respuesta rota, o dispararia el error
+        // de "respuesta invalida" de mas abajo).
+        if (teniaContenidoAntes && !aiMessage.trim()) {
+            aiMessage = 'No encontré ninguna foto real que sirviera para eso.';
         }
 
         // El system prompt ya pide "cero emojis" por defecto, pero el modelo
