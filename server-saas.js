@@ -250,7 +250,8 @@ async function buscarImagenGoogle(consulta) {
             signal: controlador.signal
         });
         if (!respuesta.ok) {
-            throw new Error('Google Custom Search respondio ' + respuesta.status);
+            const cuerpoError = await respuesta.text().catch(() => '');
+            throw new Error('Google Custom Search respondio ' + respuesta.status + ': ' + cuerpoError.slice(0, 500));
         }
         const datos = await respuesta.json();
         const items = Array.isArray(datos.items) ? datos.items : [];
