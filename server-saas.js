@@ -118,7 +118,17 @@ const SYSTEM_PROMPT_BASE = [
         'persona a buscarlo ella misma en otro sitio -- busca tu misma con ' +
         'la herramienta y contesta con lo que encuentres. Solo te saltas la ' +
         'busqueda cuando la pregunta es claramente atemporal (explicaciones ' +
-        'generales, matematicas, ayuda con codigo, redaccion, etc.).'
+        'generales, matematicas, ayuda con codigo, redaccion, etc.).',
+    '',
+    'Trabaja de forma autonoma con esas herramientas: si una sola busqueda ' +
+        'no basta, encadena todas las busquedas y lecturas de paginas que ' +
+        'necesites -- una tras otra, tu misma -- hasta reunir lo suficiente ' +
+        'para responder completo. NUNCA te detengas a mitad de la ' +
+        'investigacion para preguntar "¿quieres que siga buscando?" o ' +
+        '"¿reviso otra fuente?": decide tu misma si hace falta profundizar ' +
+        'mas y hazlo directo, sin pedir permiso para cada paso. Solo paras ' +
+        'cuando ya tienes con que dar una respuesta completa, o cuando se ' +
+        'te acaban los usos disponibles de una herramienta.'
 ].join('\n');
 
 const MAX_CARACTERES_INSTRUCCIONES = 600;
@@ -148,8 +158,8 @@ function construirSystemPrompt(user, proyecto) {
 // de Anthropic. Ambas las ejecuta la API del lado de Anthropic; nunca abren
 // ni corren nada en este servidor.
 const HERRAMIENTAS_IA = [
-    { type: 'web_search_20250305', name: 'web_search', max_uses: 5 },
-    { type: 'web_fetch_20250910', name: 'web_fetch', max_uses: 5 },
+    { type: 'web_search_20250305', name: 'web_search', max_uses: 8 },
+    { type: 'web_fetch_20250910', name: 'web_fetch', max_uses: 10 },
     { type: 'code_execution_20250825', name: 'code_execution' }
 ];
 
@@ -255,10 +265,10 @@ async function extraerTextoZip(buffer) {
 // (*) Equilibrado quedó en 3x desde antes de que Sonnet bajara de precio; no
 // se toca aca porque cambiar eso afecta el margen de cuentas ya existentes.
 const MODELOS = {
-    rapido:   { id: 'claude-haiku-4-5-20251001',  multiplicador: 1, etiqueta: 'Rápido'   },
-    equilibrado: { id: 'claude-sonnet-5', multiplicador: 3, etiqueta: 'Equilibrado' },
-    avanzado: { id: 'claude-opus-5',      multiplicador: 5, etiqueta: 'Avanzado' },
-    maximo:   { id: 'claude-fable-5',     multiplicador: 10, etiqueta: 'Máximo' }
+    rapido:   { id: 'claude-haiku-4-5-20251001',  multiplicador: 1, etiqueta: 'Rápido (Haiku)'   },
+    equilibrado: { id: 'claude-sonnet-5', multiplicador: 3, etiqueta: 'Equilibrado (Sonnet)' },
+    avanzado: { id: 'claude-opus-5',      multiplicador: 5, etiqueta: 'Avanzado (Opus)' },
+    maximo:   { id: 'claude-fable-5',     multiplicador: 10, etiqueta: 'Máximo (Fable)' }
 };
 const MODELO_POR_DEFECTO = 'rapido';
 
