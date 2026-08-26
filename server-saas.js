@@ -146,7 +146,13 @@ const SYSTEM_PROMPT_BASE = [
         'adivines una URL de imagen, porque si no existe se ve rota en el ' +
         'chat. Si la busqueda no encontro ninguna foto real que sirva, dilo ' +
         'con honestidad en vez de poner una URL inventada o mandar a la ' +
-        'persona a buscarla ella misma.'
+        'persona a buscarla ella misma.',
+    '',
+    'Llama a buscar_imagen de nuevo CADA VEZ que te pidan una foto, incluso ' +
+        'si ya buscaste algo parecido antes en esta misma conversacion: ' +
+        'nunca reuses ni copies el patron de una URL que aparecio antes en ' +
+        'el historial, aunque sea real -- cada pedido de foto es una ' +
+        'busqueda nueva.'
 ] : []).join('\n');
 
 const MAX_CARACTERES_INSTRUCCIONES = 600;
