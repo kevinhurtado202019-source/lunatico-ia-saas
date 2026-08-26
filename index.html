@@ -2436,7 +2436,7 @@
         var descImagen = imagen[1] || 'Imagen';
         var urlImagen = imagen[2];
         html += '<div class="imagen-chat">' +
-          '<img src="' + esc(urlImagen) + '" alt="' + esc(descImagen) + '" loading="lazy" onerror="imagenChatFallo(this)">' +
+          '<img src="' + esc(urlImagen) + '" alt="' + esc(descImagen) + '" loading="lazy" crossorigin="anonymous" onerror="imagenChatFallo(this)">' +
           '<button type="button" class="btn btn-borde descargar-imagen-chat" ' +
             'data-url="' + esc(urlImagen) + '" onclick="descargarImagenChat(this)">Descargar imagen</button>' +
           '</div>';
