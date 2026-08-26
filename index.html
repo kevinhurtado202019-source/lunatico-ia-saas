@@ -2042,6 +2042,15 @@
     caja.appendChild(btn);
   }
 
+  // Si la imagen que encontró la IA no carga (link roto, el sitio bloqueó la
+  // carga desde fuera, etc.) se reemplaza el bloque entero por un aviso, en
+  // vez de dejar el ícono de imagen rota de siempre.
+  window.imagenChatFallo = function (img) {
+    var contenedor = img.closest('.imagen-chat');
+    if (!contenedor) return;
+    contenedor.innerHTML = '<p class="nota">⚠️ No se pudo cargar esta imagen (el enlace puede haberse dañado).</p>';
+  };
+
   // El botón bajo cada imagen que la IA encuentra en la web: la trae por el
   // servidor (no directo del navegador al sitio de origen) para que el
   // "Guardar como" funcione siempre, sin depender de si esa página deja
@@ -2426,7 +2435,7 @@
         var descImagen = imagen[1] || 'Imagen';
         var urlImagen = imagen[2];
         html += '<div class="imagen-chat">' +
-          '<img src="' + esc(urlImagen) + '" alt="' + esc(descImagen) + '" loading="lazy">' +
+          '<img src="' + esc(urlImagen) + '" alt="' + esc(descImagen) + '" loading="lazy" onerror="imagenChatFallo(this)">' +
           '<button type="button" class="btn btn-borde descargar-imagen-chat" ' +
             'data-url="' + esc(urlImagen) + '" onclick="descargarImagenChat(this)">Descargar imagen</button>' +
           '</div>';

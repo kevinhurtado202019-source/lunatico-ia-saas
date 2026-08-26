@@ -239,14 +239,26 @@ const MAX_RESULTADOS_BUSCAR_IMAGEN = 5;
 // entrega un mime aparte por resultado).
 const EXTENSIONES_IMAGEN_UTILES = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
 
+// Sin esto, Serper busca en TODA la web y trae fotos de sitios que bloquean
+// "hotlinking" (cargar su imagen desde fuera de su propia pagina) -- se
+// probo en producción el 26 de agosto: la imagen ni cargaba en el chat ni se
+// podia descargar, aunque la URL en si era real. Estos sitios si dejan
+// cargar sus imagenes desde cualquier lado, es parte de para que existen.
+const SITIOS_IMAGEN_CONFIABLES = [
+    'commons.wikimedia.org', 'upload.wikimedia.org', 'wikipedia.org',
+    'unsplash.com', 'pexels.com', 'pixabay.com'
+];
+const FILTRO_SITIOS_CONFIABLES = SITIOS_IMAGEN_CONFIABLES.map((s) => 'site:' + s).join(' OR ');
+
 async function buscarImagenSerper(consulta) {
     const controlador = new AbortController();
     const tiempoAgotado = setTimeout(() => controlador.abort(), 10000);
     try {
+        const consultaFinal = String(consulta || '').slice(0, 250) + ' (' + FILTRO_SITIOS_CONFIABLES + ')';
         const respuesta = await fetch('https://google.serper.dev/images', {
             method: 'POST',
             headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ q: String(consulta || '').slice(0, 300), num: MAX_RESULTADOS_BUSCAR_IMAGEN }),
+            body: JSON.stringify({ q: consultaFinal, num: MAX_RESULTADOS_BUSCAR_IMAGEN * 2 }),
             signal: controlador.signal
         });
         if (!respuesta.ok) {
@@ -1801,6 +1813,9 @@ app.get('/api/descargar-imagen', imagenLimiter, authenticateToken, async (req, r
         res.end();
     } catch (error) {
         clearTimeout(tiempoAgotado);
+        // error.cause trae la razon real (DNS, TLS, conexion rechazada, etc.)
+        // -- "fetch failed" solo no dice nada util para diagnosticar.
+        if (error && error.cause) console.error('  causa:', error.cause.message || error.cause);
         if (!res.headersSent) fallo(res, 502, 'No pudimos descargar esa imagen.', error, 'descargar-imagen');
     }
 });
