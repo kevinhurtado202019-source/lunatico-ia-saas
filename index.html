@@ -2046,6 +2046,7 @@
   // carga desde fuera, etc.) se reemplaza el bloque entero por un aviso, en
   // vez de dejar el ícono de imagen rota de siempre.
   window.imagenChatFallo = function (img) {
+    console.error('Imagen del chat que no cargo:', img.src); // TEMPORAL, para diagnosticar
     var contenedor = img.closest('.imagen-chat');
     if (!contenedor) return;
     contenedor.innerHTML = '<p class="nota">⚠️ No se pudo cargar esta imagen (el enlace puede haberse dañado).</p>';
