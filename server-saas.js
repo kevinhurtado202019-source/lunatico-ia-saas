@@ -265,10 +265,10 @@ async function extraerTextoZip(buffer) {
 // (*) Equilibrado quedó en 3x desde antes de que Sonnet bajara de precio; no
 // se toca aca porque cambiar eso afecta el margen de cuentas ya existentes.
 const MODELOS = {
-    rapido:   { id: 'claude-haiku-4-5-20251001',  multiplicador: 1, etiqueta: 'Rápido (Haiku)'   },
-    equilibrado: { id: 'claude-sonnet-5', multiplicador: 3, etiqueta: 'Equilibrado (Sonnet)' },
-    avanzado: { id: 'claude-opus-5',      multiplicador: 5, etiqueta: 'Avanzado (Opus)' },
-    maximo:   { id: 'claude-fable-5',     multiplicador: 10, etiqueta: 'Máximo (Fable)' }
+    rapido:   { id: 'claude-haiku-4-5-20251001',  multiplicador: 1, etiqueta: 'Rápido (Haiku 4.5)'   },
+    equilibrado: { id: 'claude-sonnet-5', multiplicador: 3, etiqueta: 'Equilibrado (Sonnet 5)' },
+    avanzado: { id: 'claude-opus-5',      multiplicador: 5, etiqueta: 'Avanzado (Opus 5)' },
+    maximo:   { id: 'claude-fable-5',     multiplicador: 10, etiqueta: 'Máximo (Fable 5)' }
 };
 const MODELO_POR_DEFECTO = 'rapido';
 
