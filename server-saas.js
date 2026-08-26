@@ -51,11 +51,10 @@ const claudeClient = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY });
 const TOKENS_POR_CREDITO = 1000;
 const PESO_SALIDA = 5;
 
-// Igual que Wompi y el correo: si no hay clave de Google Custom Search
-// configurada, la funcionalidad de buscar fotos reales se apaga sola (ni se
-// ofrece la herramienta, ni el system prompt le dice que la use) en vez de
-// romperse.
-const IMAGEN_CONFIGURADA = Boolean(process.env.GOOGLE_SEARCH_API_KEY && process.env.GOOGLE_SEARCH_CX);
+// Igual que Wompi y el correo: si no hay clave de Serper configurada, la
+// funcionalidad de buscar fotos reales se apaga sola (ni se ofrece la
+// herramienta, ni el system prompt le dice que la use) en vez de romperse.
+const IMAGEN_CONFIGURADA = Boolean(process.env.SERPER_API_KEY);
 
 // Sin esto el modelo confunde su sandbox de code_execution con el computador
 // de quien le escribe: llega a decir "ya lo exporté a tus Descargas" cuando
@@ -190,11 +189,11 @@ const HERRAMIENTAS_IA = [
 const CREDITOS_POR_BUSQUEDA = 10;
 
 // ---------------------------------------------------------------------------
-// Buscar fotos reales (Google Custom Search, solo imagenes)
+// Buscar fotos reales (Serper.dev, resultados de Google Imagenes)
 //
 // A diferencia de web_search/web_fetch (que ejecuta Anthropic del otro lado),
 // esta es una herramienta "de cliente": cuando la IA la pide, ESTE servidor
-// tiene que llamar a Google, meter el resultado de vuelta en la conversacion
+// tiene que buscar de verdad, meter el resultado de vuelta en la conversacion
 // y volver a llamar a Claude -- por eso el ciclo de /api/chat tiene un lazo
 // (verlo mas abajo), a diferencia de las herramientas server-side de arriba
 // que resuelven todo en una sola llamada.
@@ -204,6 +203,14 @@ const CREDITOS_POR_BUSQUEDA = 10;
 // agosto: el modelo admitio que no tenia ninguna URL de imagen real
 // disponible pese a haber buscado. De ahi la necesidad de esta herramienta
 // aparte.
+//
+// Se uso Serper.dev en vez de la API oficial de Google (Custom Search JSON
+// API) porque Google la cerro a clientes nuevos -- probado el mismo 26 de
+// agosto: con la cuenta de Google recien creada, cualquier busqueda daba 403
+// "This project does not have the access to Custom Search JSON API",
+// documentado por el propio foro de desarrolladores de Google, sin arreglo
+// posible del lado de configuracion (ni facturacion, ni permisos, nada).
+// Serper si acepta cuentas nuevas y devuelve los mismos resultados de Google.
 // ---------------------------------------------------------------------------
 
 const HERRAMIENTA_BUSCAR_IMAGEN = {
@@ -228,51 +235,43 @@ const HERRAMIENTA_BUSCAR_IMAGEN = {
 const MAX_RESULTADOS_BUSCAR_IMAGEN = 5;
 
 // Formatos que de verdad se pueden mostrar con <img> en el chat y descargar
-// despues -- Google a veces devuelve SVG o BMP, que se filtran. Google
-// entrega el mime real de cada resultado (mas confiable que adivinar por la
-// URL), con la extension del archivo como respaldo si por algo faltara.
-const MIMES_IMAGEN_UTILES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+// despues -- se filtra por la extension del archivo en la URL (Serper no
+// entrega un mime aparte por resultado).
 const EXTENSIONES_IMAGEN_UTILES = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
 
-async function buscarImagenGoogle(consulta) {
-    const params = new URLSearchParams({
-        key: process.env.GOOGLE_SEARCH_API_KEY,
-        cx: process.env.GOOGLE_SEARCH_CX,
-        q: String(consulta || '').slice(0, 300),
-        searchType: 'image',
-        num: String(MAX_RESULTADOS_BUSCAR_IMAGEN),
-        safe: 'active'
-    });
+async function buscarImagenSerper(consulta) {
     const controlador = new AbortController();
     const tiempoAgotado = setTimeout(() => controlador.abort(), 10000);
     try {
-        const respuesta = await fetch('https://www.googleapis.com/customsearch/v1?' + params.toString(), {
+        const respuesta = await fetch('https://google.serper.dev/images', {
+            method: 'POST',
+            headers: { 'X-API-KEY': process.env.SERPER_API_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ q: String(consulta || '').slice(0, 300), num: MAX_RESULTADOS_BUSCAR_IMAGEN }),
             signal: controlador.signal
         });
         if (!respuesta.ok) {
             const cuerpoError = await respuesta.text().catch(() => '');
-            throw new Error('Google Custom Search respondio ' + respuesta.status + ': ' + cuerpoError.slice(0, 500));
+            throw new Error('Serper respondio ' + respuesta.status + ': ' + cuerpoError.slice(0, 500));
         }
         const datos = await respuesta.json();
-        const items = Array.isArray(datos.items) ? datos.items : [];
+        const items = Array.isArray(datos.images) ? datos.images : [];
         return items
             .filter((it) => {
-                if (it.mime) return MIMES_IMAGEN_UTILES.indexOf(String(it.mime).toLowerCase()) !== -1;
-                const ext = String(it.link || '').split('.').pop().split('?')[0].toLowerCase();
+                const ext = String(it.imageUrl || '').split('.').pop().split('?')[0].toLowerCase();
                 return EXTENSIONES_IMAGEN_UTILES.indexOf(ext) !== -1;
             })
             .slice(0, MAX_RESULTADOS_BUSCAR_IMAGEN)
-            .map((it) => ({ url: it.link, titulo: it.title || '' }));
+            .map((it) => ({ url: it.imageUrl, titulo: it.title || '' }));
     } finally {
         clearTimeout(tiempoAgotado);
     }
 }
 
-// Precio real de Google Custom Search: $5 USD cada 1.000 llamadas = $0,005 ->
-// 5 creditos al tipo de cambio de Rapido. Mismo criterio que
+// Precio real de Serper (plan de entrada): ~$3 USD cada 1.000 llamadas =
+// $0,003 -> 3 creditos al tipo de cambio de Rapido. Mismo criterio que
 // CREDITOS_POR_BUSQUEDA: se cobra al costo, sin margen aparte (el margen ya
 // esta en el multiplicador de tokens de cada modelo).
-const CREDITOS_POR_IMAGEN = 5;
+const CREDITOS_POR_IMAGEN = 3;
 const MAX_RONDAS_BUSCAR_IMAGEN = 3;
 
 // Lista final que se le manda a Claude: las de siempre + buscar_imagen, solo
@@ -1561,7 +1560,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
                 imagenesLlamadas++;
                 const consulta = (llamada.input && llamada.input.consulta) || '';
                 try {
-                    const resultados = await buscarImagenGoogle(consulta);
+                    const resultados = await buscarImagenSerper(consulta);
                     const texto = resultados.length
                         ? 'Resultados de imagenes para "' + consulta + '":\n' +
                             resultados.map((r, idx) => (idx + 1) + '. ' + r.url + (r.titulo ? ' -- "' + r.titulo + '"' : '')).join('\n')
@@ -1609,7 +1608,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         // Se cobra DESPUÉS de una respuesta correcta: si la API falla, el
         // usuario no pierde saldo. Las cuentas con creditosIlimitados nunca
         // bajan de saldo (pensadas para el propio creador de LunaticoIA).
-        // Las busquedas de imagen se cobran aparte porque Google cobra por
+        // Las busquedas de imagen se cobran aparte porque Serper cobra por
         // fuera de Anthropic, igual que CREDITOS_POR_BUSQUEDA con web_search.
         const cobro = creditosDe(usoAcumulado, modelo.multiplicador) + imagenesLlamadas * CREDITOS_POR_IMAGEN;
         const nuevoSaldo = ilimitado ? user.creditBalance : Math.max(0, user.creditBalance - cobro);
