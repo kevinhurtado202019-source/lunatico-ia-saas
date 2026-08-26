@@ -274,10 +274,10 @@ async function buscarImagenSerper(consulta) {
             const ext = String(it.imageUrl || '').split('.').pop().split('?')[0].toLowerCase();
             return EXTENSIONES_IMAGEN_BLOQUEADAS.indexOf(ext) === -1;
         });
-        console.log('buscar_imagen "' + consulta + '": ' + items.length + ' resultados de Serper, ' + filtrados.length + ' pasaron el filtro');
-        return filtrados
-            .slice(0, MAX_RESULTADOS_BUSCAR_IMAGEN)
-            .map((it) => ({ url: it.imageUrl, titulo: it.title || '' }));
+        const finales = filtrados.slice(0, MAX_RESULTADOS_BUSCAR_IMAGEN).map((it) => ({ url: it.imageUrl, titulo: it.title || '' }));
+        console.log('buscar_imagen "' + consulta + '": ' + items.length + ' resultados de Serper, ' + filtrados.length + ' pasaron el filtro. URLs devueltas:\n' +
+            finales.map((f) => '  ' + f.url).join('\n'));
+        return finales;
     } finally {
         clearTimeout(tiempoAgotado);
     }
