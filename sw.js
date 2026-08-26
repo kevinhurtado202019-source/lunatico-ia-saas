@@ -3,7 +3,7 @@
 // -- nunca se sirve una version vieja de la app teniendo internet, porque
 // este proyecto se despliega muy seguido y una cache agresiva dejaria a
 // alguien viendo una version atrasada sin darse cuenta.
-const CACHE = 'lunaticoia-shell-v1';
+const CACHE = 'lunaticoia-shell-v2';
 const RUTAS_SHELL = ['/', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (evento) => {
@@ -23,6 +23,15 @@ self.addEventListener('activate', (evento) => {
 
 self.addEventListener('fetch', (evento) => {
     const url = new URL(evento.request.url);
+
+    // Solo se intercepta lo propio del sitio. Peticiones a otros dominios
+    // (fotos que la IA encuentra en Wikimedia/Unsplash/etc., el CDN de
+    // Twemoji para los emojis, Google Fonts si los hubiera...) se dejan
+    // pasar tal cual, sin que este service worker las toque -- probado en
+    // produccion el 26 de agosto: interceptarlas las bloqueaba a medias
+    // (el navegador las reportaba como "(blocked)"), aunque la URL en si
+    // funcionara perfecto por fuera de la pagina.
+    if (url.origin !== self.location.origin) return;
 
     // La API nunca se cachea: siempre va a la red, con datos reales (saldo,
     // respuestas del chat, etc.) -- cachear esto seria mostrar informacion
