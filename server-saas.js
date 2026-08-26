@@ -234,10 +234,13 @@ const HERRAMIENTA_BUSCAR_IMAGEN = {
 
 const MAX_RESULTADOS_BUSCAR_IMAGEN = 5;
 
-// Formatos que de verdad se pueden mostrar con <img> en el chat y descargar
-// despues -- se filtra por la extension del archivo en la URL (Serper no
-// entrega un mime aparte por resultado).
-const EXTENSIONES_IMAGEN_UTILES = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+// Extensiones que de plano NO sirven (paginas, vectores, documentos) -- se
+// usa como lista negra, no blanca: muchas imagenes de sitios buenos (p.ej.
+// Unsplash) no tienen ninguna extension en la URL, solo un ID, y se
+// descartaban todas por error cuando el filtro exigia una extension "buena".
+// La descarga real (/api/descargar-imagen) de todas formas verifica el tipo
+// de verdad por el Content-Type que responde el servidor, no por la URL.
+const EXTENSIONES_IMAGEN_BLOQUEADAS = ['svg', 'html', 'htm', 'php', 'pdf', 'bmp', 'tiff', 'tif', 'ico'];
 
 // Sin esto, Serper busca en TODA la web y trae fotos de sitios que bloquean
 // "hotlinking" (cargar su imagen desde fuera de su propia pagina) -- se
@@ -267,11 +270,12 @@ async function buscarImagenSerper(consulta) {
         }
         const datos = await respuesta.json();
         const items = Array.isArray(datos.images) ? datos.images : [];
-        return items
-            .filter((it) => {
-                const ext = String(it.imageUrl || '').split('.').pop().split('?')[0].toLowerCase();
-                return EXTENSIONES_IMAGEN_UTILES.indexOf(ext) !== -1;
-            })
+        const filtrados = items.filter((it) => {
+            const ext = String(it.imageUrl || '').split('.').pop().split('?')[0].toLowerCase();
+            return EXTENSIONES_IMAGEN_BLOQUEADAS.indexOf(ext) === -1;
+        });
+        console.log('buscar_imagen "' + consulta + '": ' + items.length + ' resultados de Serper, ' + filtrados.length + ' pasaron el filtro');
+        return filtrados
             .slice(0, MAX_RESULTADOS_BUSCAR_IMAGEN)
             .map((it) => ({ url: it.imageUrl, titulo: it.title || '' }));
     } finally {
