@@ -1238,7 +1238,15 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
 
         const memoriaCuentaDoc = await db.collection('memoriaCuenta').findOne({ userId: user._id });
 
+        // La pantalla de bienvenida completa (sello, "¿En que andas
+        // pensando?", sugerencias) solo tiene sentido la primera vez -- una
+        // vez la persona ya sabe que puede preguntarle, verla en cada chat
+        // nuevo es puro ruido. "Nuevo" = todavia no ha mandado ni un mensaje.
+        const yaEscribio = await db.collection('messages').findOne({ userId: user._id, role: 'user' });
+        const esNuevo = !yaEscribio;
+
         res.json({
+            esNuevo,
             email: user.email,
             name: user.name || user.email.split('@')[0],
             creditBalance: user.creditBalance,

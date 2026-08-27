@@ -1359,11 +1359,13 @@
   <div id="hilo" role="log" aria-live="polite" aria-label="Conversación">
     <div class="centro" id="lienzo">
       <div class="bienvenida" id="bienvenida">
-        <p class="bienvenida-sello">Sin mensualidad · pagas con Nequi, PSE o tarjeta · tus créditos no caducan</p>
-        <h1>¿En qué andas pensando?</h1>
-        <p>Escribe abajo y empezamos. Cada respuesta descuenta solo los créditos que consume de verdad, así que las conversaciones largas gastan algo más.</p>
+        <div id="bienvenidaIntro">
+          <p class="bienvenida-sello">Sin mensualidad · pagas con Nequi, PSE o tarjeta · tus créditos no caducan</p>
+          <h1>¿En qué andas pensando?</h1>
+          <p>Escribe abajo y empezamos. Cada respuesta descuenta solo los créditos que consume de verdad, así que las conversaciones largas gastan algo más.</p>
+        </div>
         <div class="asistentes-inicio" id="asistentesInicio"></div>
-        <div class="sugerencias">
+        <div class="sugerencias" id="sugerenciasInicio">
           <button class="sugerencia" onclick="usarSugerencia(this)">Explícame algo complicado en palabras simples</button>
           <button class="sugerencia" onclick="usarSugerencia(this)">Me puedes ayudar a crear una página web</button>
           <button class="sugerencia" onclick="usarSugerencia(this)">Me puedes ayudar a crear un APK</button>
@@ -1980,7 +1982,25 @@
       }).join('');
       pintarSaldo();
       pintarVerificacion();
+      personalizarBienvenida();
     });
+  }
+
+  // La bienvenida completa (sello, "¿En que andas pensando?", sugerencias)
+  // es para gente nueva que todavia no sabe que puede preguntarle a la IA.
+  // Alguien que ya escribio antes no necesita verla de nuevo cada vez que
+  // abre un chat vacio -- se le cambia por un saludo corto y con su nombre,
+  // como hace la app oficial de Claude. Las tarjetas de "tus asistentes" se
+  // quedan igual para todos: son un atajo util, no una explicacion.
+  function personalizarBienvenida() {
+    if (!yo || yo.esNuevo) return;
+    var intro = $('bienvenidaIntro');
+    var sugerencias = $('sugerenciasInicio');
+    if (!intro || intro.dataset.personalizada) return;
+    intro.dataset.personalizada = '1';
+    var nombre = (yo.name || '').trim().split(' ')[0] || '';
+    intro.innerHTML = '<h1>¿Qué hay de nuevo' + (nombre ? ', ' + esc(nombre) : '') + '?</h1>';
+    if (sugerencias) sugerencias.remove();
   }
 
   function cargarPaquetes() {
