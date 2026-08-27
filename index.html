@@ -1017,13 +1017,25 @@
   // quedaba tapada por la hora/bateria del telefono.
   (function () {
     function fijarAltoReal() {
-      var alto = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+      var vv = window.visualViewport;
+      var alto = (vv && vv.height) || window.innerHeight;
       document.documentElement.style.setProperty('--vh', (alto * 0.01) + 'px');
+
+      // Al enfocar el campo de escribir, Safari en iPhone a veces desplaza
+      // la pagina entera hacia arriba "para ayudar" (visualViewport.offsetTop
+      // deja de ser 0), y la barra de LunaticoIA termina detras de la
+      // hora/bateria del telefono. Se contrarresta corriendo #app hacia
+      // abajo esa misma cantidad, para que se vea fijo en su sitio.
+      var app = document.getElementById('app');
+      if (app) app.style.transform = (vv && vv.offsetTop) ? 'translateY(' + vv.offsetTop + 'px)' : '';
     }
     fijarAltoReal();
     window.addEventListener('resize', fijarAltoReal);
     window.addEventListener('orientationchange', fijarAltoReal);
-    if (window.visualViewport) window.visualViewport.addEventListener('resize', fijarAltoReal);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', fijarAltoReal);
+      window.visualViewport.addEventListener('scroll', fijarAltoReal);
+    }
   })();
 </script>
 </head>
