@@ -158,6 +158,8 @@ const SYSTEM_PROMPT_BASE = [
 
 const MAX_CARACTERES_INSTRUCCIONES = 600;
 const MAX_CARACTERES_PROYECTO = 60;
+const MAX_CARACTERES_DESCRIPCION_PROYECTO = 80;
+const MAX_CARACTERES_ICONO_PROYECTO = 32;
 const MENSAJES_POR_HISTORIAL_VISUAL = 50;
 
 // Cada usuario puede guardar sus propias instrucciones (tono, idioma,
@@ -1386,7 +1388,9 @@ app.get('/api/proyectos', authenticateToken, async (req, res) => {
                 id: p._id.toString(),
                 nombre: p.nombre,
                 createdAt: p.createdAt,
-                instrucciones: typeof p.instrucciones === 'string' ? p.instrucciones : ''
+                instrucciones: typeof p.instrucciones === 'string' ? p.instrucciones : '',
+                icono: typeof p.icono === 'string' ? p.icono : '',
+                descripcion: typeof p.descripcion === 'string' ? p.descripcion : ''
             }))
         });
     } catch (error) {
@@ -1401,13 +1405,47 @@ app.post('/api/proyectos', authenticateToken, async (req, res) => {
         if (nombre.length > MAX_CARACTERES_PROYECTO) {
             return res.status(400).json({ error: 'Máximo ' + MAX_CARACTERES_PROYECTO + ' caracteres' });
         }
+        const icono = typeof req.body.icono === 'string' ? req.body.icono.trim() : '';
+        if (icono.length > MAX_CARACTERES_ICONO_PROYECTO) {
+            return res.status(400).json({ error: 'Ese ícono es demasiado largo' });
+        }
+        const descripcion = typeof req.body.descripcion === 'string' ? req.body.descripcion.trim() : '';
+        if (descripcion.length > MAX_CARACTERES_DESCRIPCION_PROYECTO) {
+            return res.status(400).json({ error: 'Máximo ' + MAX_CARACTERES_DESCRIPCION_PROYECTO + ' caracteres' });
+        }
         const proyectos = db.collection('proyectos');
         const userId = new ObjectId(req.user.userId);
         const createdAt = new Date();
-        const r = await proyectos.insertOne({ userId, nombre, createdAt });
-        res.status(201).json({ id: r.insertedId.toString(), nombre, createdAt });
+        const r = await proyectos.insertOne({ userId, nombre, createdAt, icono, descripcion });
+        res.status(201).json({ id: r.insertedId.toString(), nombre, createdAt, icono, descripcion });
     } catch (error) {
         fallo(res, 500, 'No pudimos crear el proyecto.', error, 'proyectos-crear');
+    }
+});
+
+app.put('/api/proyectos/:id/detalles', authenticateToken, async (req, res) => {
+    try {
+        let proyectoId;
+        try { proyectoId = new ObjectId(req.params.id); } catch (e) {
+            return res.status(400).json({ error: 'Proyecto no válido' });
+        }
+        const icono = typeof req.body.icono === 'string' ? req.body.icono.trim() : '';
+        if (icono.length > MAX_CARACTERES_ICONO_PROYECTO) {
+            return res.status(400).json({ error: 'Ese ícono es demasiado largo' });
+        }
+        const descripcion = typeof req.body.descripcion === 'string' ? req.body.descripcion.trim() : '';
+        if (descripcion.length > MAX_CARACTERES_DESCRIPCION_PROYECTO) {
+            return res.status(400).json({ error: 'Máximo ' + MAX_CARACTERES_DESCRIPCION_PROYECTO + ' caracteres' });
+        }
+        const proyectos = db.collection('proyectos');
+        const userId = new ObjectId(req.user.userId);
+        const proyecto = await proyectos.findOne({ _id: proyectoId, userId });
+        if (!proyecto) return res.status(404).json({ error: 'Proyecto no encontrado' });
+
+        await proyectos.updateOne({ _id: proyectoId, userId }, { $set: { icono, descripcion } });
+        res.json({ icono, descripcion });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos guardar los detalles del asistente.', error, 'proyectos-detalles');
     }
 });
 

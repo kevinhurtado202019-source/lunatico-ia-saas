@@ -701,6 +701,36 @@
     border-color: var(--borde); color: var(--texto); transform: translateY(-1px);
   }
 
+  .asistentes-inicio {
+    display: grid; gap: 10px; margin-top: 30px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    text-align: left;
+  }
+  .asistentes-inicio:empty { display: none; margin-top: 0; }
+  .asistente-card {
+    background: var(--superficie);
+    border: 1px solid var(--borde-suave);
+    border-radius: var(--r);
+    padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 4px;
+    transition: border-color .15s, color .15s, transform .15s;
+  }
+  .asistente-card:hover { border-color: var(--borde); transform: translateY(-1px); }
+  .asistente-card .asistente-icono { font-size: 22px; line-height: 1; }
+  .asistente-card .asistente-nombre {
+    font-size: 14.5px; font-weight: 600; color: var(--texto);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .asistente-card .asistente-descripcion {
+    font-size: 12.5px; color: var(--tenue);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .asistente-card.asistente-nuevo {
+    align-items: center; justify-content: center; text-align: center;
+    color: var(--tenue); border-style: dashed;
+  }
+  .asistente-card.asistente-nuevo:hover { color: var(--texto); }
+
   /* --------- redactor --------- */
 
   .pie { flex: none; padding: 10px 20px 18px; }
@@ -961,6 +991,17 @@
   }
   .crear-proyecto input:focus { outline: none; border-color: var(--luna); }
   .crear-proyecto .btn { padding: 10px 14px; font-size: 14px; white-space: nowrap; }
+  .crear-proyecto input#iconoProyecto, .campo-icono {
+    flex: none; width: 46px; text-align: center; font-size: 18px; padding: 10px 8px;
+  }
+
+  .selector-iconos { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .selector-iconos button {
+    width: 34px; height: 34px; border-radius: 8px; font-size: 17px;
+    background: var(--noche); border: 1px solid var(--borde-suave);
+    display: grid; place-items: center;
+  }
+  .selector-iconos button:hover { border-color: var(--luna); }
 
   .proyecto-fila {
     display: flex; align-items: center; gap: 6px;
@@ -969,10 +1010,12 @@
   .proyecto-fila.activo { background: var(--luna-fondo); }
   .proyecto-item {
     flex: 1; min-width: 0; text-align: left;
-    display: flex; flex-direction: column; gap: 2px;
+    display: flex; align-items: center; gap: 10px;
     padding: 10px 12px; border-radius: 10px;
   }
   .proyecto-fila:not(.activo) .proyecto-item:hover { background: var(--alta); }
+  .proyecto-icono { flex: none; font-size: 18px; line-height: 1; }
+  .proyecto-texto { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .proyecto-nombre {
     font-size: 14.5px; font-weight: 500; color: var(--texto);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1250,7 +1293,7 @@
 <!-- ===================== APP ===================== -->
 <div id="app" class="oculto">
   <header class="barra">
-    <button class="icono" onclick="abrirPanel('proyectos')" aria-label="Proyectos" title="Proyectos">
+    <button class="icono" onclick="abrirPanel('proyectos')" aria-label="Asistentes" title="Asistentes">
       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <path d="M4 6h16M4 12h16M4 18h16"/>
       </svg>
@@ -1281,6 +1324,7 @@
       <div class="bienvenida" id="bienvenida">
         <h1>¿En qué andas pensando?</h1>
         <p>Escribe abajo y empezamos. Cada respuesta descuenta solo los créditos que consume de verdad, así que las conversaciones largas gastan algo más.</p>
+        <div class="asistentes-inicio" id="asistentesInicio"></div>
         <div class="sugerencias">
           <button class="sugerencia" onclick="usarSugerencia(this)">Explícame algo complicado en palabras simples</button>
           <button class="sugerencia" onclick="usarSugerencia(this)">Me puedes ayudar a crear una página web</button>
@@ -1718,6 +1762,7 @@
     mostrarSolo('app');
     cargarCuenta();
     cargarPaquetes();
+    cargarProyectos();
     $('entrada').focus();
   }
 
@@ -1927,6 +1972,7 @@
     if (!bienvenidaHTML) return;
     $('lienzo').innerHTML = bienvenidaHTML;
     hayMensajes = false;
+    renderAsistentesInicio();
   }
 
   function limpiarBienvenida() {
@@ -2836,7 +2882,7 @@
 
   window.abrirPanel = function (vista) {
     abridor = document.activeElement;
-    var titulos = { paquetes: 'Paquetes de créditos', proyectos: 'Proyectos', admin: 'Panel de admin' };
+    var titulos = { paquetes: 'Paquetes de créditos', proyectos: 'Asistentes', admin: 'Panel de admin' };
     $('tituloPanel').textContent = titulos[vista] || 'Mi cuenta';
     $('cuerpoPanel').innerHTML =
       vista === 'paquetes' ? vistaPaquetes() :
@@ -2893,20 +2939,50 @@
   }
 
   var MAX_CARACTERES_PROYECTO_FRONT = 60;
+  var MAX_CARACTERES_DESCRIPCION_FRONT = 80;
   var confirmarBorradoProyecto = null; // id del proyecto que esta en modo "¿seguro?"
 
   function cargarProyectos() {
     return api('/api/proyectos').then(function (r) {
       if (r.res.ok && r.data) {
         proyectos = (r.data.proyectos || []).map(function (p) {
-          return { id: p.id, nombre: p.nombre, createdAt: p.createdAt, instrucciones: p.instrucciones || '' };
+          return {
+            id: p.id, nombre: p.nombre, createdAt: p.createdAt,
+            instrucciones: p.instrucciones || '', icono: p.icono || '', descripcion: p.descripcion || ''
+          };
         });
         if (proyectoActual) {
           var actualizado = proyectos.filter(function (x) { return x.id === proyectoActual.id; })[0];
           if (actualizado) proyectoActual = actualizado;
         }
       }
+      renderAsistentesInicio();
     });
+  }
+
+  // Emoji sugeridos para elegir rápido el ícono de un asistente, sin
+  // depender de que el usuario tenga teclado con emojis a la mano.
+  var ICONOS_SUGERIDOS = ['🤖', '💼', '📈', '✍️', '⚖️', '🎨', '🍳', '🏋️', '🧑‍💻', '📚'];
+
+  // Tarjetas de "tus asistentes" en la pantalla de bienvenida (si la hay en
+  // pantalla ahora mismo -- si ya hay mensajes, el contenedor no existe y no
+  // hay nada que pintar).
+  function renderAsistentesInicio() {
+    var cont = $('asistentesInicio');
+    if (!cont) return;
+    var tarjetas = proyectos.map(function (p) {
+      return '' +
+        '<button type="button" class="asistente-card" onclick="cambiarProyecto(\'' + p.id + '\')">' +
+          '<span class="asistente-icono">' + esc(p.icono || '🤖') + '</span>' +
+          '<span class="asistente-nombre">' + esc(p.nombre) + '</span>' +
+          (p.descripcion ? '<span class="asistente-descripcion">' + esc(p.descripcion) + '</span>' : '') +
+        '</button>';
+    }).join('');
+    cont.innerHTML = tarjetas +
+      '<button type="button" class="asistente-card asistente-nuevo" onclick="abrirPanel(\'proyectos\')">' +
+        '<span class="asistente-icono">+</span>' +
+        '<span class="asistente-nombre">Nuevo asistente</span>' +
+      '</button>';
   }
 
   window.guardarInstruccionesProyecto = function () {
@@ -2926,6 +3002,36 @@
       var enLista = proyectos.filter(function (x) { return x.id === proyectoActual.id; })[0];
       if (enLista) enLista.instrucciones = r.data.instrucciones;
       if (aviso) { aviso.style.color = 'var(--ok)'; aviso.textContent = 'Guardado.'; }
+    });
+  };
+
+  window.elegirIconoProyecto = function (emoji, campoId) {
+    var campo = $(campoId);
+    if (campo) campo.value = emoji;
+  };
+
+  window.guardarDetallesAsistente = function () {
+    if (!proyectoActual) return;
+    var campoIcono = $('iconoDetalle');
+    var campoDescripcion = $('descripcionDetalle');
+    var aviso = $('avisoDetalleAsistente');
+    var icono = campoIcono ? campoIcono.value.trim() : '';
+    var descripcion = campoDescripcion ? campoDescripcion.value.trim() : '';
+    if (aviso) { aviso.style.color = 'var(--tenue)'; aviso.textContent = 'Guardando…'; }
+    api('/api/proyectos/' + proyectoActual.id + '/detalles', {
+      method: 'PUT', body: JSON.stringify({ icono: icono, descripcion: descripcion })
+    }).then(function (r) {
+      if (!r.res.ok) {
+        if (aviso) { aviso.style.color = 'var(--error)'; aviso.textContent = (r.data && r.data.error) || 'No se pudo guardar.'; }
+        return;
+      }
+      proyectoActual.icono = r.data.icono;
+      proyectoActual.descripcion = r.data.descripcion;
+      var enLista = proyectos.filter(function (x) { return x.id === proyectoActual.id; })[0];
+      if (enLista) { enLista.icono = r.data.icono; enLista.descripcion = r.data.descripcion; }
+      if (aviso) { aviso.style.color = 'var(--ok)'; aviso.textContent = 'Guardado.'; }
+      actualizarChipProyecto();
+      renderAsistentesInicio();
     });
   };
 
@@ -2981,19 +3087,29 @@
 
   window.crearProyecto = function () {
     var campo = $('nombreProyecto');
+    var campoIcono = $('iconoProyecto');
+    var campoDescripcion = $('descripcionProyecto');
     var aviso = $('avisoProyecto');
     var nombre = campo ? campo.value.trim() : '';
+    var icono = campoIcono ? campoIcono.value.trim() : '';
+    var descripcion = campoDescripcion ? campoDescripcion.value.trim() : '';
     if (!nombre) {
-      if (aviso) { aviso.style.color = 'var(--error)'; aviso.textContent = 'Ponle un nombre al proyecto.'; }
+      if (aviso) { aviso.style.color = 'var(--error)'; aviso.textContent = 'Ponle un nombre al asistente.'; }
       return;
     }
     if (aviso) { aviso.style.color = 'var(--tenue)'; aviso.textContent = 'Creando…'; }
-    api('/api/proyectos', { method: 'POST', body: JSON.stringify({ nombre: nombre }) }).then(function (r) {
+    api('/api/proyectos', {
+      method: 'POST', body: JSON.stringify({ nombre: nombre, icono: icono, descripcion: descripcion })
+    }).then(function (r) {
       if (!r.res.ok) {
         if (aviso) { aviso.style.color = 'var(--error)'; aviso.textContent = (r.data && r.data.error) || 'No se pudo crear.'; }
         return;
       }
-      proyectos.unshift({ id: r.data.id, nombre: r.data.nombre, createdAt: r.data.createdAt, instrucciones: '' });
+      proyectos.unshift({
+        id: r.data.id, nombre: r.data.nombre, createdAt: r.data.createdAt, instrucciones: '',
+        icono: r.data.icono || '', descripcion: r.data.descripcion || ''
+      });
+      renderAsistentesInicio();
       window.cambiarProyecto(r.data.id);
     });
   };
@@ -3022,15 +3138,25 @@
         cargarHistorialChat();
       }
       $('cuerpoPanel').innerHTML = vistaProyectos();
+      renderAsistentesInicio();
     });
   };
+
+  function selectorIconos(campoId) {
+    return '<div class="selector-iconos">' + ICONOS_SUGERIDOS.map(function (e) {
+      return '<button type="button" onclick="elegirIconoProyecto(\'' + e + '\',\'' + campoId + '\')">' + e + '</button>';
+    }).join('') + '</div>';
+  }
 
   function vistaProyectos() {
     var filaGeneral = '' +
       '<div class="proyecto-fila' + (!proyectoActual ? ' activo' : '') + '">' +
         '<button type="button" class="proyecto-item" onclick="cambiarProyecto(null)">' +
-          '<span class="proyecto-nombre">General</span>' +
-          '<span class="proyecto-nota">Chat de siempre, sin proyecto</span>' +
+          '<span class="proyecto-icono">💬</span>' +
+          '<span class="proyecto-texto">' +
+            '<span class="proyecto-nombre">General</span>' +
+            '<span class="proyecto-nota">Chat de siempre, sin proyecto</span>' +
+          '</span>' +
         '</button>' +
       '</div>';
 
@@ -3047,7 +3173,11 @@
       return '' +
         '<div class="proyecto-fila' + (activo ? ' activo' : '') + '">' +
           '<button type="button" class="proyecto-item" onclick="cambiarProyecto(\'' + p.id + '\')">' +
-            '<span class="proyecto-nombre">' + esc(p.nombre) + '</span>' +
+            '<span class="proyecto-icono">' + esc(p.icono || '🤖') + '</span>' +
+            '<span class="proyecto-texto">' +
+              '<span class="proyecto-nombre">' + esc(p.nombre) + '</span>' +
+              (p.descripcion ? '<span class="proyecto-nota">' + esc(p.descripcion) + '</span>' : '') +
+            '</span>' +
           '</button>' +
           '<button type="button" class="proyecto-borrar" onclick="pedirBorrarProyecto(\'' + p.id + '\')" aria-label="Eliminar proyecto" title="Eliminar proyecto">✕</button>' +
         '</div>';
@@ -3055,19 +3185,33 @@
 
     return '' +
       '<div class="bloque">' +
-        '<h3>Nuevo proyecto</h3>' +
+        '<h3>Nuevo asistente</h3>' +
+        '<p class="nota">Guárdalo con instrucciones fijas para un tema puntual -- tu negocio, un idioma, lo que sea -- y lo tienes listo cuando lo necesites, sin repetir el contexto cada vez.</p>' +
         '<div class="crear-proyecto">' +
-          '<input type="text" id="nombreProyecto" placeholder="Nombre del proyecto" maxlength="' + MAX_CARACTERES_PROYECTO_FRONT + '">' +
-          '<button type="button" class="btn btn-borde" onclick="crearProyecto()">+ Nuevo</button>' +
+          '<input type="text" id="iconoProyecto" class="campo-icono" maxlength="8" placeholder="🤖" value="">' +
+          '<input type="text" id="nombreProyecto" placeholder="Nombre del asistente" maxlength="' + MAX_CARACTERES_PROYECTO_FRONT + '">' +
         '</div>' +
+        selectorIconos('iconoProyecto') +
+        '<input type="text" id="descripcionProyecto" placeholder="¿Para qué lo vas a usar? (opcional)" maxlength="' + MAX_CARACTERES_DESCRIPCION_FRONT + '" style="width:100%;margin-top:8px;background:var(--noche);color:var(--texto);border:1px solid var(--borde-suave);border-radius:10px;padding:10px 13px;font-family:var(--ui);font-size:14px">' +
+        '<button type="button" class="btn btn-borde" style="width:100%;margin-top:8px" onclick="crearProyecto()">+ Crear asistente</button>' +
         '<p class="nota-guardado" id="avisoProyecto"></p>' +
       '</div>' +
       '<div class="bloque">' +
         '<h3>Conversaciones</h3>' +
         filaGeneral +
-        (proyectos.length ? filasProyectos : '<p class="nota">Todavía no tienes proyectos. Crea uno arriba para agrupar tus conversaciones.</p>') +
+        (proyectos.length ? filasProyectos : '<p class="nota">Todavía no tienes asistentes guardados. Crea uno arriba para tenerlo listo cuando lo necesites.</p>') +
       '</div>' +
       (proyectoActual ? (
+        '<div class="bloque">' +
+          '<h3>Apariencia de "' + esc(proyectoActual.nombre) + '"</h3>' +
+          '<div class="crear-proyecto">' +
+            '<input type="text" id="iconoDetalle" class="campo-icono" maxlength="8" value="' + esc(proyectoActual.icono || '') + '" placeholder="🤖">' +
+            '<input type="text" id="descripcionDetalle" placeholder="¿Para qué lo vas a usar? (opcional)" maxlength="' + MAX_CARACTERES_DESCRIPCION_FRONT + '" value="' + esc(proyectoActual.descripcion || '') + '">' +
+          '</div>' +
+          selectorIconos('iconoDetalle') +
+          '<button class="btn btn-borde" style="width:100%" onclick="guardarDetallesAsistente()">Guardar apariencia</button>' +
+          '<p class="nota-guardado" id="avisoDetalleAsistente"></p>' +
+        '</div>' +
         '<div class="bloque">' +
           '<h3>Instrucciones de "' + esc(proyectoActual.nombre) + '"</h3>' +
           '<p class="nota">Si las llenas, reemplazan (solo dentro de este proyecto) las instrucciones generales de tu cuenta.</p>' +
@@ -3298,6 +3442,7 @@
     mostrarSolo('app');
     cargarCuenta();
     cargarPaquetes();
+    cargarProyectos();
   } else {
     mostrarSolo('landing');
     cargarPaquetes();
