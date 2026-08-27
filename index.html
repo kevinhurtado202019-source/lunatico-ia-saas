@@ -811,6 +811,20 @@
   }
   .boton-descargar-respuesta:hover { color: var(--texto); border-color: var(--luna); }
 
+  .boton-editar-mensaje {
+    flex: none; align-self: center; width: 26px; height: 26px; border-radius: 7px;
+    display: grid; place-items: center; margin-right: 6px;
+    color: var(--tenue); background: var(--noche); border: 1px solid var(--borde-suave);
+    font-size: 13px; opacity: .6; transition: opacity .15s, color .15s, border-color .15s;
+  }
+  .boton-editar-mensaje:hover { opacity: 1; color: var(--texto); border-color: var(--luna); }
+
+  .edicion-mensaje {
+    display: flex; flex-direction: column; gap: 8px; max-width: 80%; flex: 1 1 auto;
+  }
+  .edicion-mensaje .campo-instrucciones { margin-bottom: 0; min-height: 70px; }
+  .edicion-botones { display: flex; gap: 8px; justify-content: flex-end; }
+
   .adjunto {
     display: flex; align-items: center; gap: 9px;
     background: var(--superficie); border: 1px solid var(--borde);
@@ -993,6 +1007,13 @@
   }
   .campo-instrucciones:focus { outline: 2px solid var(--luna); outline-offset: 1px; }
   .nota-guardado { font-size: 13px; margin: 8px 0 0; min-height: 1.4em; }
+
+  .campo-buscar {
+    width: 100%;
+    background: var(--noche); color: var(--texto); border: 1px solid var(--borde-suave);
+    border-radius: 10px; padding: 11px 14px; font-family: var(--ui); font-size: 15px;
+  }
+  .campo-buscar:focus { outline: none; border-color: var(--luna); }
 
   .crear-proyecto { display: flex; gap: 8px; }
   .crear-proyecto input {
@@ -1317,6 +1338,11 @@
     <div class="empuje"></div>
     <button class="saldo" id="chipSaldo" onclick="abrirPanel('paquetes')" title="Ver paquetes de créditos">
       <b id="numSaldo">—</b><span>créditos</span>
+    </button>
+    <button class="icono" onclick="abrirPanel('buscar')" aria-label="Buscar en tus conversaciones" title="Buscar en tus conversaciones">
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <circle cx="10.5" cy="10.5" r="6.5"/><path d="M20 20l-4.8-4.8"/>
+      </svg>
     </button>
     <button class="icono" onclick="abrirPanel('cuenta')" aria-label="Mi cuenta" title="Mi cuenta">
       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -2173,6 +2199,86 @@
     caja.appendChild(btn);
   }
 
+  // Editar un mensaje ya enviado: borra ese mensaje y todo lo que vino
+  // despues (en el servidor y en pantalla) y lo reenvia como si se
+  // acabara de escribir, para que se regenere la respuesta desde ahi --
+  // igual que "editar y reintentar" en ChatGPT/Claude.ai. Solo se ofrece
+  // en mensajes de puro texto (ver el llamado a esta funcion): si el
+  // mensaje tuvo un adjunto, ese adjunto no se puede volver a mandar.
+  function agregarBotonEditar(caja, elTexto, textoOriginal, id) {
+    if (!id) return;
+    var elCuando = caja.querySelector('.cuando');
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'boton-editar-mensaje';
+    btn.setAttribute('aria-label', 'Editar mensaje');
+    btn.title = 'Editar mensaje';
+    btn.textContent = '✎';
+    btn.onclick = function () {
+      if (caja.querySelector('.edicion-mensaje')) return;
+      elTexto.style.display = 'none';
+      if (elCuando) elCuando.style.display = 'none';
+      btn.style.display = 'none';
+
+      var envoltorio = document.createElement('div');
+      envoltorio.className = 'edicion-mensaje';
+      var area = document.createElement('textarea');
+      area.className = 'campo-instrucciones';
+      area.value = textoOriginal;
+      var botones = document.createElement('div');
+      botones.className = 'edicion-botones';
+      var btnGuardar = document.createElement('button');
+      btnGuardar.type = 'button'; btnGuardar.className = 'btn btn-borde';
+      btnGuardar.textContent = 'Guardar y regenerar';
+      var btnCancelar = document.createElement('button');
+      btnCancelar.type = 'button'; btnCancelar.className = 'btn-mini';
+      btnCancelar.textContent = 'Cancelar';
+      var aviso = document.createElement('p');
+      aviso.className = 'nota-guardado';
+
+      function restaurar() {
+        envoltorio.remove();
+        elTexto.style.display = '';
+        if (elCuando) elCuando.style.display = '';
+        btn.style.display = '';
+      }
+      btnCancelar.onclick = restaurar;
+      btnGuardar.onclick = function () {
+        var nuevoTexto = area.value.trim();
+        if (!nuevoTexto) return;
+        btnGuardar.disabled = true; btnCancelar.disabled = true;
+        aviso.style.color = 'var(--tenue)';
+        aviso.textContent = 'Regenerando…';
+        api('/api/mensajes/' + id, { method: 'DELETE' }).then(function (r) {
+          if (!r.res.ok) {
+            aviso.style.color = 'var(--error)';
+            aviso.textContent = (r.data && r.data.error) || 'No se pudo editar.';
+            btnGuardar.disabled = false; btnCancelar.disabled = false;
+            return;
+          }
+          // Quita este turno y todo lo que venia despues (su respuesta y
+          // cualquier turno mas nuevo): la conversacion en pantalla queda
+          // igual que justo antes de haber mandado el mensaje editado.
+          var nodo = caja;
+          while (nodo) {
+            var siguiente = nodo.nextSibling;
+            nodo.remove();
+            nodo = siguiente;
+          }
+          $('entrada').value = nuevoTexto;
+          ajustarAlto();
+          window.enviar();
+        });
+      };
+
+      botones.appendChild(btnGuardar); botones.appendChild(btnCancelar);
+      envoltorio.appendChild(area); envoltorio.appendChild(botones); envoltorio.appendChild(aviso);
+      caja.insertBefore(envoltorio, elTexto);
+      area.focus();
+    };
+    caja.insertBefore(btn, caja.firstChild);
+  }
+
   // Si la imagen que encontró la IA no carga (link roto, el sitio bloqueó la
   // carga desde fuera, etc.) se reemplaza el bloque entero por un aviso, en
   // vez de dejar el ícono de imagen rota de siempre.
@@ -2811,6 +2917,11 @@
             agregarBotonEscuchar(esperando.caja, esperando.texto);
             agregarBotonDescargarRespuesta(esperando.caja, textoFinal);
             agregarBotonCompartir(esperando.caja, mensaje, textoFinal);
+            // Solo se deja editar si no hubo adjunto: al reenviar el
+            // adjunto no se vuelve a mandar, y no queremos perderlo sin
+            // avisar. El id llega recien aca -- por eso no se agrega el
+            // boton al crear el turno, sino cuando se confirma guardado.
+            if (json.idUsuario && !adjunto) agregarBotonEditar(mio.caja, mio.texto, mensaje, json.idUsuario);
 
             var c = json.consumo;
             if (c) {
@@ -2892,14 +3003,16 @@
     });
   }
 
+  var titulosPanel = { paquetes: 'Paquetes de créditos', proyectos: 'Asistentes', admin: 'Panel de admin', buscar: 'Buscar en tus conversaciones' };
+
   window.abrirPanel = function (vista) {
     abridor = document.activeElement;
-    var titulos = { paquetes: 'Paquetes de créditos', proyectos: 'Asistentes', admin: 'Panel de admin' };
-    $('tituloPanel').textContent = titulos[vista] || 'Mi cuenta';
+    $('tituloPanel').textContent = titulosPanel[vista] || 'Mi cuenta';
     $('cuerpoPanel').innerHTML =
       vista === 'paquetes' ? vistaPaquetes() :
       vista === 'proyectos' ? vistaProyectos() :
       vista === 'admin' ? vistaAdmin() :
+      vista === 'buscar' ? vistaBuscar() :
       vistaCuenta();
     fondoInerte(true);
     $('panel').classList.add('abierto');
@@ -2908,14 +3021,14 @@
     if (f.length) f[0].focus();
     if (vista === 'proyectos') {
       cargarProyectos().then(function () {
-        if ($('panel').classList.contains('abierto') && $('tituloPanel').textContent === 'Proyectos') {
+        if ($('panel').classList.contains('abierto') && $('tituloPanel').textContent === titulosPanel.proyectos) {
           $('cuerpoPanel').innerHTML = vistaProyectos();
         }
       });
     }
     if (vista === 'admin') {
       cargarAdmin().then(function () {
-        if ($('panel').classList.contains('abierto') && $('tituloPanel').textContent === 'Panel de admin') {
+        if ($('panel').classList.contains('abierto') && $('tituloPanel').textContent === titulosPanel.admin) {
           $('cuerpoPanel').innerHTML = vistaAdmin();
         }
       });
@@ -3077,7 +3190,11 @@
           agregarBotonDescargarRespuesta(t.caja, m.texto);
         } else {
           var texto = m.texto + (m.tuvoAdjunto ? '\n\n📎 (archivo adjunto)' : '');
-          turno('yo', 'Tú', texto, marca);
+          var tYo = turno('yo', 'Tú', texto, marca);
+          // Editar un mensaje regenera todo lo que vino despues, y el
+          // adjunto (si lo hubo) no se vuelve a mandar -- para no perder
+          // esa parte sin avisar, solo se deja editar el texto plano.
+          if (!m.tuvoAdjunto) agregarBotonEditar(tYo.caja, tYo.texto, m.texto, m.id);
         }
       });
       abajo();
@@ -3344,6 +3461,14 @@
         '<button class="btn btn-borde" style="width:100%" onclick="guardarInstrucciones()">Guardar instrucciones</button>' +
         '<p class="nota-guardado" id="avisoInstrucciones"></p>' +
       '</div>' +
+      '<div class="bloque">' +
+        '<h3>Lo que recuerdo de ti</h3>' +
+        '<p class="nota">Se va armando solo con lo que hablamos, en cualquier chat o asistente -- así no tienes que repetirlo cada vez. Puedes corregirlo o vaciarlo cuando quieras.</p>' +
+        '<textarea id="cajaMemoriaCuenta" class="campo-instrucciones" maxlength="' + (yo.maxCaracteresMemoriaCuenta || 1200) + '" placeholder="Todavía no hay nada guardado -- va apareciendo a medida que conversamos.">' + esc(yo.memoriaCuenta || '') + '</textarea>' +
+        '<button class="btn btn-borde" style="width:100%" onclick="guardarMemoriaCuenta()">Guardar cambios</button>' +
+        '<button class="btn btn-borde" style="width:100%;margin-top:8px;color:var(--error);border-color:var(--error)" onclick="borrarMemoriaCuenta()">Vaciar memoria</button>' +
+        '<p class="nota-guardado" id="avisoMemoriaCuenta"></p>' +
+      '</div>' +
       (yo.creditosIlimitados ? '<button class="btn btn-borde" style="width:100%; margin-bottom:12px" onclick="abrirPanel(\'admin\')">Panel de admin</button>' : '') +
       '<button class="btn btn-borde" style="width:100%" onclick="salir()">Cerrar sesión</button>';
   }
@@ -3371,6 +3496,120 @@
         aviso.textContent = 'No se pudo guardar. Revisa tu conexión.';
       });
   };
+
+  window.guardarMemoriaCuenta = function () {
+    var caja = $('cajaMemoriaCuenta');
+    var aviso = $('avisoMemoriaCuenta');
+    if (!caja) return;
+    aviso.style.color = 'var(--tenue)';
+    aviso.textContent = 'Guardando…';
+    api('/api/memoria-cuenta', { method: 'PUT', body: JSON.stringify({ memoria: caja.value }) })
+      .then(function (r) {
+        if (!r.res.ok) {
+          aviso.style.color = 'var(--error)';
+          aviso.textContent = (r.data && r.data.error) || 'No se pudo guardar.';
+          return;
+        }
+        yo.memoriaCuenta = r.data.memoria;
+        aviso.style.color = 'var(--ok)';
+        aviso.textContent = 'Guardado.';
+      })
+      .catch(function () {
+        aviso.style.color = 'var(--error)';
+        aviso.textContent = 'No se pudo guardar. Revisa tu conexión.';
+      });
+  };
+
+  window.borrarMemoriaCuenta = function () {
+    var aviso = $('avisoMemoriaCuenta');
+    aviso.style.color = 'var(--tenue)';
+    aviso.textContent = 'Vaciando…';
+    api('/api/memoria-cuenta', { method: 'DELETE' }).then(function (r) {
+      if (!r.res.ok) {
+        aviso.style.color = 'var(--error)';
+        aviso.textContent = (r.data && r.data.error) || 'No se pudo vaciar.';
+        return;
+      }
+      yo.memoriaCuenta = '';
+      var caja = $('cajaMemoriaCuenta');
+      if (caja) caja.value = '';
+      aviso.style.color = 'var(--ok)';
+      aviso.textContent = 'Vaciada.';
+    });
+  };
+
+  var temporizadorBuscar = null;
+
+  function vistaBuscar() {
+    return '' +
+      '<div class="bloque">' +
+        '<input type="text" id="cajaBuscar" class="campo-buscar" placeholder="Buscar en tus conversaciones…" oninput="buscarMensajesDebounced()" autocomplete="off">' +
+        '<div id="resultadosBuscar"><p class="nota" style="margin-top:14px">Escribe al menos 2 letras para buscar.</p></div>' +
+      '</div>';
+  }
+
+  window.buscarMensajesDebounced = function () {
+    clearTimeout(temporizadorBuscar);
+    temporizadorBuscar = setTimeout(buscarMensajesAhora, 350);
+  };
+
+  function buscarMensajesAhora() {
+    var campo = $('cajaBuscar');
+    var cont = $('resultadosBuscar');
+    if (!campo || !cont) return;
+    var q = campo.value.trim();
+    if (q.length < 2) {
+      cont.innerHTML = '<p class="nota" style="margin-top:14px">Escribe al menos 2 letras para buscar.</p>';
+      return;
+    }
+    cont.innerHTML = '<p class="nota" style="margin-top:14px">Buscando…</p>';
+    api('/api/mensajes/buscar?q=' + encodeURIComponent(q)).then(function (r) {
+      // Si mientras tanto la persona siguio escribiendo, esta respuesta ya
+      // es vieja -- no pisar un resultado mas nuevo con uno atrasado.
+      if (!$('cajaBuscar') || $('cajaBuscar').value.trim() !== q) return;
+      if (!r.res.ok || !r.data) {
+        cont.innerHTML = '<p class="nota" style="margin-top:14px">No se pudo buscar. Intenta de nuevo.</p>';
+        return;
+      }
+      var resultados = r.data.resultados || [];
+      if (!resultados.length) {
+        cont.innerHTML = '<p class="nota" style="margin-top:14px">Nada encontrado con "' + esc(q) + '".</p>';
+        return;
+      }
+      cont.innerHTML = resultados.map(function (res) {
+        var nombreProyecto = 'General';
+        var existe = true;
+        if (res.proyectoId) {
+          var p = proyectos.filter(function (x) { return x.id === res.proyectoId; })[0];
+          if (p) { nombreProyecto = (p.icono || '🤖') + ' ' + p.nombre; } else { existe = false; }
+        } else {
+          nombreProyecto = '💬 General';
+        }
+        var fecha = new Date(res.createdAt).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' });
+        var quien = res.role === 'user' ? 'Tú: ' : 'LunaticoIA: ';
+        if (!existe) {
+          return '' +
+            '<div class="proyecto-fila" style="opacity:.55">' +
+              '<div class="proyecto-item" style="cursor:default">' +
+                '<span class="proyecto-texto">' +
+                  '<span class="proyecto-nombre">Conversación eliminada</span>' +
+                  '<span class="proyecto-nota">' + quien + esc(res.fragmento) + '</span>' +
+                '</span>' +
+              '</div>' +
+            '</div>';
+        }
+        return '' +
+          '<div class="proyecto-fila">' +
+            '<button type="button" class="proyecto-item" onclick="cambiarProyecto(' + (res.proyectoId ? '\'' + res.proyectoId + '\'' : 'null') + ')">' +
+              '<span class="proyecto-texto">' +
+                '<span class="proyecto-nombre">' + esc(nombreProyecto) + ' · ' + esc(fecha) + '</span>' +
+                '<span class="proyecto-nota">' + quien + esc(res.fragmento) + '</span>' +
+              '</span>' +
+            '</button>' +
+          '</div>';
+      }).join('');
+    });
+  }
 
   function vistaPaquetes() {
     if (!paquetes.length) return '<p class="nota">No se pudieron cargar los paquetes.</p>';

@@ -168,8 +168,18 @@ const MENSAJES_POR_HISTORIAL_VISUAL = 50;
 // (lo del sandbox de code_execution) siempre se respetan. Si el chat es
 // dentro de un proyecto con SUS PROPIAS instrucciones, esas mandan en vez de
 // las generales de la cuenta -- mas especifico gana.
-function construirSystemPrompt(user, proyecto, resumen) {
+function construirSystemPrompt(user, proyecto, resumen, memoriaCuenta) {
     let prompt = SYSTEM_PROMPT_BASE;
+
+    // A diferencia del resumen (por conversacion), esto vale sin importar
+    // en que chat o asistente este la persona -- ver actualizarMemoriaCuentaSiHaceFalta.
+    if (memoriaCuenta) {
+        prompt += '\n\n' +
+            'Lo que ya sabes de esta persona de otras conversaciones (puede ser de ' +
+            'otro chat o asistente guardado distinto al de ahora mismo -- dalo por ' +
+            'sabido igual, sin decir "en otra conversacion me dijiste"):\n' +
+            memoriaCuenta;
+    }
 
     // El resumen cubre lo que quedo fuera de la ventana de MENSAJES_DE_HISTORIAL
     // (ver actualizarResumenSiHaceFalta) -- sin esto, la conversacion "olvida"
@@ -480,6 +490,15 @@ const MENSAJES_DE_HISTORIAL = 30;
 const UMBRAL_MENSAJES_PARA_RESUMIR = 20;
 const MAX_CARACTERES_RESUMEN = 2500;
 
+// Memoria de cuenta: a diferencia del resumen de arriba (que es por
+// conversacion -- userId+proyectoId), esto es SOLO por userId, y por eso
+// vale para CUALQUIER chat o asistente que abra la persona, no solo el de
+// donde salio el dato. Guarda unicamente hechos estables (nombre, a que se
+// dedica, preferencias) -- nunca el contenido puntual de una conversacion,
+// eso ya lo cubre el resumen de cada proyecto por separado.
+const UMBRAL_MENSAJES_PARA_MEMORIA_CUENTA = 20;
+const MAX_CARACTERES_MEMORIA_CUENTA = 1200;
+
 async function actualizarResumenSiHaceFalta(db, userId, proyectoId) {
     try {
         const messages = db.collection('messages');
@@ -543,6 +562,61 @@ async function actualizarResumenSiHaceFalta(db, userId, proyectoId) {
         console.log('resumen: actualizado (' + nuevoResumen.trim().length + ' caracteres): ' + nuevoResumen.trim().slice(0, 200));
     } catch (error) {
         console.error('✗ actualizarResumen:', (error && error.message) || error);
+    }
+}
+
+async function actualizarMemoriaCuentaSiHaceFalta(db, userId) {
+    try {
+        const messages = db.collection('messages');
+        const memorias = db.collection('memoriaCuenta');
+        const filtro = { userId };
+
+        const actual = await memorias.findOne(filtro);
+        const desde = (actual && actual.resumidoHasta) || new Date(0);
+
+        // A diferencia del resumen por conversacion, aca no hay "ventana
+        // visible" que cuidar -- se toma todo lo nuevo desde la ultima vez,
+        // sin importar de que proyecto sea cada mensaje.
+        const pendientes = await messages.find({
+            userId, createdAt: { $gt: desde }
+        }).sort({ createdAt: 1 }).toArray();
+
+        if (pendientes.length < UMBRAL_MENSAJES_PARA_MEMORIA_CUENTA) return;
+
+        const textoPendientes = pendientes.map((m) => {
+            const contenido = typeof m.content === 'string' ? m.content : '[mensaje con adjunto]';
+            return (m.role === 'user' ? 'Persona: ' : 'LunaticoIA: ') + contenido.slice(0, 600);
+        }).join('\n\n');
+
+        const promptMemoria = (actual && actual.resumen ? 'Lo que ya sabes de esta persona:\n' + actual.resumen + '\n\n' : '') +
+            'Fragmento nuevo de sus conversaciones recientes (pueden ser de distintos ' +
+            'chats o asistentes guardados):\n' + textoPendientes + '\n\n' +
+            'Actualiza lo que sabes de esta persona en un solo parrafo conciso, en ' +
+            'tercera persona, de maximo ' + MAX_CARACTERES_MEMORIA_CUENTA + ' caracteres. ' +
+            'Guarda SOLO datos estables que sirvan sin importar el tema de la conversacion: ' +
+            'su nombre, a que se dedica o su negocio, preferencias personales, cosas ' +
+            'importantes que haya contado de si misma. NO copies detalles puntuales de un ' +
+            'tema especifico de una sola conversacion (eso ya se resume aparte, por chat). ' +
+            'No inventes nada que no este en el texto de arriba.';
+
+        const respuesta = await claudeClient.messages.create({
+            model: MODELOS.rapido.id,
+            max_tokens: 400,
+            messages: [{ role: 'user', content: promptMemoria }]
+        });
+        const nuevaMemoria = (respuesta.content.find((b) => b.type === 'text') || {}).text || '';
+        if (!nuevaMemoria.trim()) return;
+
+        await memorias.updateOne(filtro, {
+            $set: {
+                resumen: nuevaMemoria.trim().slice(0, MAX_CARACTERES_MEMORIA_CUENTA),
+                resumidoHasta: pendientes[pendientes.length - 1].createdAt,
+                actualizadoEn: new Date()
+            }
+        }, { upsert: true });
+        console.log('memoria de cuenta: actualizada (' + nuevaMemoria.trim().length + ' caracteres)');
+    } catch (error) {
+        console.error('✗ actualizarMemoriaCuenta:', (error && error.message) || error);
     }
 }
 
@@ -810,7 +884,7 @@ async function enviarCorreo(destinatario, asunto, textoPlano, html) {
 
 const RESPALDO_INTERVALO_MS = 24 * 60 * 60 * 1000;
 const RESPALDO_MAX_BYTES = 20 * 1024 * 1024;
-const COLECCIONES_A_RESPALDAR = ['users', 'messages', 'proyectos', 'compras', 'compartidos', 'resumenes', 'paginas'];
+const COLECCIONES_A_RESPALDAR = ['users', 'messages', 'proyectos', 'compras', 'compartidos', 'resumenes', 'paginas', 'memoriaCuenta'];
 
 async function enviarRespaldoBaseDatos() {
     if (!CORREO_CONFIGURADO) return;
@@ -1012,6 +1086,7 @@ async function connectDatabase() {
         const compartidos = db.collection('compartidos');
         const resumenes = db.collection('resumenes');
         const paginas = db.collection('paginas');
+        const memoriaCuenta = db.collection('memoriaCuenta');
 
         await users.createIndex({ email: 1 }, { unique: true });
         await users.createIndex({ verificationToken: 1 }, { sparse: true });
@@ -1023,6 +1098,7 @@ async function connectDatabase() {
         await compartidos.createIndex({ codigo: 1 }, { unique: true });
         await resumenes.createIndex({ userId: 1, proyectoId: 1 }, { unique: true });
         await paginas.createIndex({ codigo: 1 }, { unique: true });
+        await memoriaCuenta.createIndex({ userId: 1 }, { unique: true });
 
         console.log('✓ MongoDB connected successfully');
     } catch (error) {
@@ -1160,6 +1236,8 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
         user = await asegurarVerificado(users, user);
         user = await asegurarCodigoReferido(users, user);
 
+        const memoriaCuentaDoc = await db.collection('memoriaCuenta').findOne({ userId: user._id });
+
         res.json({
             email: user.email,
             name: user.name || user.email.split('@')[0],
@@ -1170,6 +1248,8 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
             correoConfigurado: CORREO_CONFIGURADO,
             instrucciones: typeof user.instrucciones === 'string' ? user.instrucciones : '',
             maxCaracteresInstrucciones: MAX_CARACTERES_INSTRUCCIONES,
+            memoriaCuenta: (memoriaCuentaDoc && memoriaCuentaDoc.resumen) || '',
+            maxCaracteresMemoriaCuenta: MAX_CARACTERES_MEMORIA_CUENTA,
             codigoReferido: user.codigoReferido,
             creditosBonoReferido: CREDITOS_BONO_REFERIDO,
             referidosExitosos: user.referidosExitosos || 0,
@@ -1286,6 +1366,39 @@ app.post('/api/instrucciones', authenticateToken, async (req, res) => {
         res.json({ instrucciones: texto });
     } catch (error) {
         fallo(res, 500, 'No pudimos guardar tus instrucciones.', error, 'instrucciones');
+    }
+});
+
+// Lo que LunaticoIA "recuerda" de la persona entre TODOS sus chats/asistentes
+// (a diferencia de las instrucciones de arriba, que son una orden fija, esto
+// son hechos que la IA fue anotando sola -- ver actualizarMemoriaCuentaSiHaceFalta).
+// Editable y borrable a mano desde "Mi cuenta", para que nunca sea una caja
+// negra: la persona siempre puede ver, corregir o vaciar lo que se sabe de ella.
+app.put('/api/memoria-cuenta', authenticateToken, async (req, res) => {
+    try {
+        const texto = typeof req.body.memoria === 'string' ? req.body.memoria.trim() : '';
+        if (texto.length > MAX_CARACTERES_MEMORIA_CUENTA) {
+            return res.status(400).json({ error: 'Máximo ' + MAX_CARACTERES_MEMORIA_CUENTA + ' caracteres' });
+        }
+        const userId = new ObjectId(req.user.userId);
+        await db.collection('memoriaCuenta').updateOne(
+            { userId },
+            { $set: { resumen: texto, actualizadoEn: new Date() } },
+            { upsert: true }
+        );
+        res.json({ memoria: texto });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos guardar la memoria de tu cuenta.', error, 'memoria-cuenta-guardar');
+    }
+});
+
+app.delete('/api/memoria-cuenta', authenticateToken, async (req, res) => {
+    try {
+        const userId = new ObjectId(req.user.userId);
+        await db.collection('memoriaCuenta').deleteOne({ userId });
+        res.json({ eliminada: true });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos borrar la memoria de tu cuenta.', error, 'memoria-cuenta-borrar');
     }
 });
 
@@ -1570,6 +1683,7 @@ app.get('/api/mensajes', authenticateToken, async (req, res) => {
                     ? (m.content.find((b) => b.type === 'text') || {}).text || ''
                     : m.content;
                 return {
+                    id: m._id.toString(),
                     role: m.role,
                     texto: texto,
                     tuvoAdjunto: esBloques && m.content.some((b) => b.type === 'image' || b.type === 'document'),
@@ -1579,6 +1693,82 @@ app.get('/api/mensajes', authenticateToken, async (req, res) => {
         });
     } catch (error) {
         fallo(res, 500, 'No pudimos cargar la conversación.', error, 'mensajes-historial');
+    }
+});
+
+// Editar un mensaje ya enviado: se borra ese mensaje y todo lo que vino
+// despues en la misma conversacion (su respuesta, y cualquier turno
+// posterior), para que el front pueda reenviar el texto corregido y
+// regenerar la respuesta desde ahi -- igual que "editar y reintentar" en
+// ChatGPT/Claude.ai. Nunca borra mensajes de otra conversacion ni de otro
+// usuario: el corte es por createdAt, pero siempre dentro del mismo
+// userId+proyectoId del mensaje encontrado.
+app.delete('/api/mensajes/:id', authenticateToken, async (req, res) => {
+    try {
+        let mensajeId;
+        try { mensajeId = new ObjectId(req.params.id); } catch (e) {
+            return res.status(400).json({ error: 'Mensaje no válido' });
+        }
+        const userId = new ObjectId(req.user.userId);
+        const messages = db.collection('messages');
+        const mensaje = await messages.findOne({ _id: mensajeId, userId });
+        if (!mensaje) return res.status(404).json({ error: 'Mensaje no encontrado' });
+
+        const r = await messages.deleteMany({
+            userId,
+            proyectoId: mensaje.proyectoId,
+            createdAt: { $gte: mensaje.createdAt }
+        });
+        res.json({ eliminados: r.deletedCount });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos borrar el mensaje.', error, 'mensajes-borrar');
+    }
+});
+
+function escaparRegex(texto) {
+    return texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const MAX_RESULTADOS_BUSCAR_MENSAJES = 30;
+const MAX_CARACTERES_CONSULTA_BUSCAR = 100;
+
+// Busca en TODOS los mensajes de la persona (cualquier proyecto/asistente,
+// mas el chat general) por coincidencia de texto -- para "que dijimos de
+// tal cosa la semana pasada", ahora que hay memoria mas larga tiene sentido
+// poder encontrarlo sin tener que abrir cada conversacion una por una.
+// Regex simple en vez de un indice de texto de Mongo: a la escala de un
+// solo usuario (unos pocos miles de mensajes como mucho) alcanza de sobra,
+// y evita mantener un indice de texto aparte.
+app.get('/api/mensajes/buscar', authenticateToken, async (req, res) => {
+    try {
+        const consulta = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, MAX_CARACTERES_CONSULTA_BUSCAR) : '';
+        if (consulta.length < 2) return res.json({ resultados: [] });
+
+        const userId = new ObjectId(req.user.userId);
+        const messages = db.collection('messages');
+        const patron = new RegExp(escaparRegex(consulta), 'i');
+
+        const encontrados = await messages
+            .find({ userId, content: { $regex: patron } })
+            .sort({ createdAt: -1 })
+            .limit(MAX_RESULTADOS_BUSCAR_MENSAJES)
+            .toArray();
+
+        res.json({
+            resultados: encontrados.map((m) => {
+                const texto = typeof m.content === 'string' ? m.content : '';
+                const pos = Math.max(0, texto.search(patron) - 60);
+                const fragmento = (pos > 0 ? '…' : '') + texto.slice(pos, pos + 160).trim() + (pos + 160 < texto.length ? '…' : '');
+                return {
+                    proyectoId: m.proyectoId ? m.proyectoId.toString() : null,
+                    role: m.role,
+                    fragmento,
+                    createdAt: m.createdAt
+                };
+            })
+        });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos buscar en tus conversaciones.', error, 'mensajes-buscar');
     }
 });
 
@@ -1742,6 +1932,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         }
 
         const resumenDoc = await db.collection('resumenes').findOne({ userId, proyectoId });
+        const memoriaCuentaDoc = await db.collection('memoriaCuenta').findOne({ userId });
 
         const history = await messages
             .find({ userId, proyectoId })
@@ -1831,7 +2022,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         const urlsImagenValidas = new Set();
         const usoAcumulado = { input_tokens: 0, output_tokens: 0, server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 } };
         const MAX_RONDAS_TOTAL = MAX_RONDAS_BUSCAR_IMAGEN + 1;
-        const systemPrompt = construirSystemPrompt(user, proyectoActual, resumenDoc && resumenDoc.resumen);
+        const systemPrompt = construirSystemPrompt(user, proyectoActual, resumenDoc && resumenDoc.resumen, memoriaCuentaDoc && memoriaCuentaDoc.resumen);
 
         for (let ronda = 1; ronda <= MAX_RONDAS_TOTAL; ronda++) {
             const stream = claudeClient.messages.stream({
@@ -1941,12 +2132,12 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         // la ventana de historial (MENSAJES_DE_HISTORIAL), Claude los sigue
         // "viendo" en los siguientes mensajes de la misma conversacion.
         const guardadoEn = new Date();
-        await messages.insertOne({
+        const insertadoUsuario = await messages.insertOne({
             userId, proyectoId, role: 'user',
             content: contenidoUsuario,
             createdAt: guardadoEn
         });
-        await messages.insertOne({
+        const insertadoAsistente = await messages.insertOne({
             userId, proyectoId, role: 'assistant', content: aiMessage,
             modelo: claveModelo,
             createdAt: new Date(guardadoEn.getTime() + 1)
@@ -1970,6 +2161,8 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         res.write('data: ' + JSON.stringify({
             done: true,
             response: aiMessage,
+            idUsuario: insertadoUsuario.insertedId.toString(),
+            idAsistente: insertadoAsistente.insertedId.toString(),
             consumo: {
                 modelo: modelo.etiqueta,
                 tokensEntrada: usoAcumulado.input_tokens,
@@ -1989,6 +2182,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         // si se junto suficiente historial viejo, lo resume para que la
         // memoria le alcance mas alla de MENSAJES_DE_HISTORIAL.
         actualizarResumenSiHaceFalta(db, userId, proyectoId);
+        actualizarMemoriaCuentaSiHaceFalta(db, userId);
     } catch (error) {
         if (res.headersSent) {
             // Ya se le mando texto real al cliente (el SSE esta abierto): no se
