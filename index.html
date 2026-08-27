@@ -44,8 +44,11 @@
 
   * { box-sizing: border-box; }
   /* 100% no encoge cuando se abre el teclado del movil y el redactor queda
-     debajo. dvh si sigue al area visible; el 100% queda de respaldo. */
-  html, body { height: 100%; height: 100dvh; }
+     debajo. dvh si sigue al area visible; el 100% queda de respaldo. Como
+     ademas dvh se ha visto fallar (deja una franja negra vacia abajo) en la
+     PWA instalada en iPhone, --vh -- calculado con JS contra el alto real
+     de la ventana -- manda al final si el navegador lo soporta. */
+  html, body { height: 100%; height: 100dvh; height: calc(var(--vh, 1vh) * 100); }
 
   body {
     margin: 0;
@@ -995,6 +998,20 @@
     .nota-pie { display: none; }
   }
 </style>
+<script>
+  // Respaldo a 100dvh: en la PWA instalada en iPhone, dvh a veces mide mal
+  // el alto real y deja una franja negra vacia abajo de la pantalla. Se
+  // calcula el alto de verdad con JS (window.innerHeight, confiable en
+  // todos lados) y se usa esa variable en el CSS -- ver "height: calc(var(--vh...".
+  (function () {
+    function fijarAltoReal() {
+      document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
+    }
+    fijarAltoReal();
+    window.addEventListener('resize', fijarAltoReal);
+    window.addEventListener('orientationchange', fijarAltoReal);
+  })();
+</script>
 </head>
 <body>
 
