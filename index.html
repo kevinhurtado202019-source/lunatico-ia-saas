@@ -683,6 +683,12 @@
     margin: 0 0 10px; text-wrap: balance;
   }
   .bienvenida p { color: var(--tenue); margin: 0 auto; max-width: 46ch; }
+  .bienvenida-logo {
+    width: 56px; height: 56px; border-radius: 14px;
+    margin: 0 auto 18px; display: block;
+    box-shadow: var(--sombra);
+  }
+
   .bienvenida .bienvenida-sello {
     display: inline-flex; align-items: center;
     background: var(--luna-fondo); color: var(--luna-viva);
@@ -1360,6 +1366,7 @@
     <div class="centro" id="lienzo">
       <div class="bienvenida" id="bienvenida">
         <div id="bienvenidaIntro">
+          <img class="bienvenida-logo" src="/icons/icon-192.png" alt="" width="56" height="56">
           <p class="bienvenida-sello">Sin mensualidad · pagas con Nequi, PSE o tarjeta · tus créditos no caducan</p>
           <h1>¿En qué andas pensando?</h1>
           <p>Escribe abajo y empezamos. Cada respuesta descuenta solo los créditos que consume de verdad, así que las conversaciones largas gastan algo más.</p>
@@ -1999,7 +2006,9 @@
     if (!intro || intro.dataset.personalizada) return;
     intro.dataset.personalizada = '1';
     var nombre = (yo.name || '').trim().split(' ')[0] || '';
-    intro.innerHTML = '<h1>¿Qué hay de nuevo' + (nombre ? ', ' + esc(nombre) : '') + '?</h1>';
+    intro.innerHTML =
+      '<img class="bienvenida-logo" src="/icons/icon-192.png" alt="" width="56" height="56">' +
+      '<h1>¿Qué hay de nuevo' + (nombre ? ', ' + esc(nombre) : '') + '?</h1>';
     if (sugerencias) sugerencias.remove();
   }
 
