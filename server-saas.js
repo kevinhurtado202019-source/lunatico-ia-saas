@@ -620,6 +620,33 @@ async function actualizarMemoriaCuentaSiHaceFalta(db, userId) {
     }
 }
 
+// Titulo automatico de un chat nuevo (no de un asistente guardado, esos ya
+// tienen nombre propio puesto a mano), a partir de su primer mensaje --
+// igual que hace Claude.ai/ChatGPT. Se corre sincrono (no en segundo plano
+// como el resumen) porque el front lo necesita YA para mostrarlo en la lista
+// de chats apenas se manda el primer mensaje; el costo es una sola llamada
+// chica a Haiku, una unica vez en la vida del chat.
+async function generarTituloChat(mensajeUsuario) {
+    try {
+        const respuesta = await claudeClient.messages.create({
+            model: MODELOS.rapido.id,
+            max_tokens: 20,
+            messages: [{
+                role: 'user',
+                content: 'Resume esto en un titulo corto para una lista de chats (maximo 6 ' +
+                    'palabras, sin comillas ni punto final, en el mismo idioma del mensaje): ' +
+                    String(mensajeUsuario || '').slice(0, 500)
+            }]
+        });
+        const texto = (respuesta.content.find((b) => b.type === 'text') || {}).text || '';
+        const limpio = texto.trim().replace(/^["'“]+|["'”.]+$/g, '').slice(0, MAX_CARACTERES_PROYECTO);
+        return limpio || 'Nuevo chat';
+    } catch (error) {
+        console.error('✗ generarTituloChat:', (error && error.message) || error);
+        return 'Nuevo chat';
+    }
+}
+
 const PAQUETES = {
     prueba:  { creditos: 400,   precioCOP: 9900,   nombre: 'Prueba'  },
     basico:  { creditos: 1200,  precioCOP: 24900,  nombre: 'Básico'  },
@@ -1095,6 +1122,7 @@ async function connectDatabase() {
         await messages.createIndex({ userId: 1, proyectoId: 1, createdAt: -1 });
         await compras.createIndex({ referencia: 1 }, { unique: true });
         await proyectos.createIndex({ userId: 1, createdAt: -1 });
+        await proyectos.createIndex({ userId: 1, ultimaActividad: -1 });
         await compartidos.createIndex({ codigo: 1 }, { unique: true });
         await resumenes.createIndex({ userId: 1, proyectoId: 1 }, { unique: true });
         await paginas.createIndex({ codigo: 1 }, { unique: true });
@@ -1548,12 +1576,25 @@ app.get('/api/proyectos', authenticateToken, async (req, res) => {
     try {
         const proyectos = db.collection('proyectos');
         const userId = new ObjectId(req.user.userId);
-        const lista = await proyectos.find({ userId }).sort({ createdAt: -1 }).toArray();
+        // Ordenados por actividad mas reciente (no por fecha de creacion): un
+        // chat que se uso hoy debe subir arriba aunque se haya creado hace
+        // semanas, igual que la lista de "Recientes" de Claude.ai.
+        const lista = await proyectos.find({ userId }).sort({ ultimaActividad: -1, createdAt: -1 }).toArray();
+
+        // El chat general de siempre (proyectoId null, ver el comentario de
+        // arriba) no tiene documento propio en esta coleccion -- si la cuenta
+        // tiene mensajes ahi, el front lo agrega como una fila mas de la
+        // lista de chats, sin boton de borrar (no hay id que borrar).
+        const tieneGeneralLegado = !!(await db.collection('messages').findOne({ userId, proyectoId: null }));
+
         res.json({
+            tieneGeneralLegado,
             proyectos: lista.map((p) => ({
                 id: p._id.toString(),
                 nombre: p.nombre,
+                tipo: p.tipo === 'chat' ? 'chat' : 'asistente',
                 createdAt: p.createdAt,
+                ultimaActividad: p.ultimaActividad || p.createdAt,
                 instrucciones: typeof p.instrucciones === 'string' ? p.instrucciones : '',
                 icono: typeof p.icono === 'string' ? p.icono : '',
                 descripcion: typeof p.descripcion === 'string' ? p.descripcion : ''
@@ -1561,6 +1602,24 @@ app.get('/api/proyectos', authenticateToken, async (req, res) => {
         });
     } catch (error) {
         fallo(res, 500, 'No pudimos cargar tus proyectos.', error, 'proyectos-listar');
+    }
+});
+
+// Un "chat" es un proyecto liviano sin icono/descripcion/instrucciones
+// propias: nace sin nombre real ("Nuevo chat") y /api/chat le pone titulo
+// solo, con IA, apenas llega el primer mensaje -- igual que un chat nuevo en
+// Claude.ai o ChatGPT. Vive en la misma coleccion que los asistentes
+// guardados (mismo mecanismo de mensajes/instrucciones/borrado), solo que
+// tipo:'chat' en vez de 'asistente' cambia como se ve en la lista.
+app.post('/api/chats', authenticateToken, async (req, res) => {
+    try {
+        const proyectos = db.collection('proyectos');
+        const userId = new ObjectId(req.user.userId);
+        const createdAt = new Date();
+        const r = await proyectos.insertOne({ userId, nombre: 'Nuevo chat', tipo: 'chat', createdAt, ultimaActividad: createdAt });
+        res.status(201).json({ id: r.insertedId.toString(), nombre: 'Nuevo chat', tipo: 'chat', createdAt });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos crear el chat.', error, 'chats-crear');
     }
 });
 
@@ -1947,6 +2006,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             .sort({ createdAt: -1, _id: -1 })
             .limit(MENSAJES_DE_HISTORIAL)
             .toArray();
+        const esPrimerMensajeDelChat = history.length === 0;
 
         let messagesForClaude = history
             .reverse()
@@ -2151,6 +2211,19 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             createdAt: new Date(guardadoEn.getTime() + 1)
         });
 
+        let tituloNuevo = null;
+        if (proyectoId) {
+            const cambios = { ultimaActividad: guardadoEn };
+            // Solo los chats sin nombre propio (no los asistentes guardados,
+            // que ya vienen con nombre puesto a mano) se titulan solos, y
+            // solo la primera vez -- las siguientes veces ya tienen titulo.
+            if (proyectoActual && proyectoActual.tipo === 'chat' && esPrimerMensajeDelChat) {
+                tituloNuevo = await generarTituloChat(mensajeTexto);
+                cambios.nombre = tituloNuevo;
+            }
+            await proyectosCol.updateOne({ _id: proyectoId }, { $set: cambios });
+        }
+
         if (!ilimitado) {
             await users.updateOne({ _id: userId }, { $set: { creditBalance: nuevoSaldo } });
             // Aviso de saldo bajo: solo en el momento exacto en que CRUZA el
@@ -2171,6 +2244,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             response: aiMessage,
             idUsuario: insertadoUsuario.insertedId.toString(),
             idAsistente: insertadoAsistente.insertedId.toString(),
+            tituloNuevo: tituloNuevo,
             consumo: {
                 modelo: modelo.etiqueta,
                 tokensEntrada: usoAcumulado.input_tokens,
