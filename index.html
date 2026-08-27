@@ -683,7 +683,7 @@
 
   /* --------- redactor --------- */
 
-  .pie { flex: none; padding: 10px 20px calc(18px + env(safe-area-inset-bottom)); }
+  .pie { flex: none; padding: 10px 20px max(18px, env(safe-area-inset-bottom)); }
   .redactor { max-width: 720px; margin: 0 auto; }
 
   .caja {
@@ -986,9 +986,13 @@
 
   @media (max-width: 620px) {
     .centro { padding: 22px 16px 8px; }
-    .pie { padding: 8px 12px calc(14px + env(safe-area-inset-bottom)); }
+    .pie { padding: 8px 12px max(14px, env(safe-area-inset-bottom)); }
     header.barra { padding: 0 12px; padding-top: env(safe-area-inset-top); gap: 10px; }
     .saldo span { display: none; }
+    /* Shift+Enter no existe en el teclado del celular -- ese aviso solo
+       aplica en computador, y en el celular era una linea entera de espacio
+       desperdiciado justo antes de la barra de gestos. */
+    .nota-pie { display: none; }
   }
 </style>
 </head>
@@ -1924,6 +1928,16 @@
     h.scrollTop = h.scrollHeight;
   }
 
+  // Cuando la IA empieza a responder, se deja la pantalla quieta mostrando
+  // el inicio del intercambio (la pregunta) arriba del todo, en vez de
+  // perseguir el final de la respuesta a medida que va llegando -- antes,
+  // con una respuesta larga en el celular, se terminaba viendo solo la
+  // ultima linea y habia que subir a mano para leerla desde el principio.
+  function mostrarInicioRespuesta(el) {
+    var h = $('hilo');
+    h.scrollTop = Math.max(0, el.offsetTop - 10);
+  }
+
   window.usarSugerencia = function (b) {
     $('entrada').value = b.textContent.trim();
     ajustarAlto();
@@ -2520,6 +2534,7 @@
     }
     var esperando = turno('ia', 'LunaticoIA', null);
     esperando.texto.innerHTML = '<span class="pensando">' + clonarLogo('logo-pensando') + 'Pensando</span>';
+    mostrarInicioRespuesta(mio.caja);
 
     // Si el fetch revienta, la peticion nunca salio: devolvemos el texto (y
     // la imagen) al campo y quitamos los turnos, para que reintentar sea
@@ -2577,7 +2592,6 @@
             huboContenido = true;
             acumulado += json.delta;
             esperando.texto.innerHTML = renderizarMarkdown(acumulado);
-            abajo();
             return;
           }
 
@@ -2611,7 +2625,6 @@
                 pintarSaldo();
               }
             }
-            abajo();
           }
         }
 
