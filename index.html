@@ -3232,12 +3232,54 @@
     });
   }
 
+  var confirmarBorradoUsuario = null; // id de la cuenta en modo "¿seguro?"
+
+  window.pedirBorrarUsuario = function (id) {
+    confirmarBorradoUsuario = id;
+    $('cuerpoPanel').innerHTML = vistaAdmin();
+  };
+
+  window.cancelarBorrarUsuario = function () {
+    confirmarBorradoUsuario = null;
+    $('cuerpoPanel').innerHTML = vistaAdmin();
+  };
+
+  window.eliminarUsuarioAdmin = function (id) {
+    api('/api/admin/usuarios/' + id, { method: 'DELETE' }).then(function (r) {
+      confirmarBorradoUsuario = null;
+      if (!r.res.ok) {
+        alert((r.data && r.data.error) || 'No se pudo borrar la cuenta.');
+        $('cuerpoPanel').innerHTML = vistaAdmin();
+        return;
+      }
+      adminUsuarios = adminUsuarios.filter(function (u) { return u.id !== id; });
+      $('cuerpoPanel').innerHTML = vistaAdmin();
+    });
+  };
+
   function vistaAdmin() {
     if (!adminUsuarios.length) return '<p class="nota">Cargando…</p>';
     return adminUsuarios.map(function (u) {
       var modelos = Object.keys(u.mensajesPorModelo || {}).map(function (k) {
         return k + ': ' + u.mensajesPorModelo[k];
       }).join(' · ') || 'sin mensajes todavía';
+
+      var pieBorrado;
+      if (u.creditosIlimitados) {
+        pieBorrado = '';
+      } else if (u.tienePagos) {
+        pieBorrado = '<p class="nota" style="margin-top:10px;color:var(--ok)">✓ Cliente real (con compra aprobada) -- protegido, no se puede borrar aquí.</p>';
+      } else if (confirmarBorradoUsuario === u.id) {
+        pieBorrado = '' +
+          '<div class="proyecto-fila confirmando" style="margin-top:10px">' +
+            '<span class="proyecto-nombre">¿Borrar esta cuenta de prueba?</span>' +
+            '<button type="button" class="btn-mini" onclick="eliminarUsuarioAdmin(\'' + u.id + '\')">Sí</button>' +
+            '<button type="button" class="btn-mini" onclick="cancelarBorrarUsuario()">No</button>' +
+          '</div>';
+      } else {
+        pieBorrado = '<button type="button" class="btn btn-borde" style="width:100%;margin-top:10px;color:var(--error);border-color:var(--error)" onclick="pedirBorrarUsuario(\'' + u.id + '\')">Borrar cuenta de prueba</button>';
+      }
+
       return '' +
         '<div class="bloque tarjeta-usuario">' +
           '<div class="dato"><span>' + esc(u.name) + '</span><b>' + (u.creditosIlimitados ? '∞' : num(u.creditBalance)) + '</b></div>' +
@@ -3245,6 +3287,7 @@
           '<div class="dato"><span>Registrado</span><b>' + esc(new Date(u.createdAt).toLocaleDateString('es-CO')) + '</b></div>' +
           '<div class="dato"><span>Mensajes totales</span><b class="num">' + num(u.totalMensajes) + '</b></div>' +
           '<p class="nota" style="margin-top:10px">' + esc(modelos) + '</p>' +
+          pieBorrado +
         '</div>';
     }).join('');
   }

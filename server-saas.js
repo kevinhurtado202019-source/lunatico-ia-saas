@@ -1199,6 +1199,7 @@ app.get('/api/admin/usuarios', authenticateToken, async (req, res) => {
 
         const todos = await users.find({}).sort({ createdAt: -1 }).toArray();
         const mensajes = await db.collection('messages').find({ role: 'assistant' }).toArray();
+        const comprasAprobadas = await db.collection('compras').find({ estado: 'APROBADA' }).toArray();
 
         const porUsuario = {};
         mensajes.forEach((m) => {
@@ -1207,12 +1208,14 @@ app.get('/api/admin/usuarios', authenticateToken, async (req, res) => {
             const modeloUsado = m.modelo || 'desconocido';
             porUsuario[clave][modeloUsado] = (porUsuario[clave][modeloUsado] || 0) + 1;
         });
+        const conPagos = new Set(comprasAprobadas.map((c) => (c.userId || '').toString()));
 
         res.json({
             usuarios: todos.map((u) => {
                 const porModelo = porUsuario[u._id.toString()] || {};
                 const totalMensajes = Object.values(porModelo).reduce((a, b) => a + b, 0);
                 return {
+                    id: u._id.toString(),
                     email: u.email,
                     name: u.name || u.email.split('@')[0],
                     creditBalance: u.creditBalance,
@@ -1220,12 +1223,54 @@ app.get('/api/admin/usuarios', authenticateToken, async (req, res) => {
                     emailVerified: u.emailVerified === true,
                     createdAt: u.createdAt,
                     mensajesPorModelo: porModelo,
-                    totalMensajes
+                    totalMensajes,
+                    tienePagos: conPagos.has(u._id.toString())
                 };
             })
         });
     } catch (error) {
         fallo(res, 500, 'No pudimos cargar el panel de admin.', error, 'admin-usuarios');
+    }
+});
+
+// Borrar una cuenta de prueba desde el panel de admin. Nunca borra una
+// cuenta con al menos una compra APROBADA (un cliente real que sí pagó) ni
+// la cuenta del dueño (creditosIlimitados) -- ambas se rechazan aunque el
+// admin se equivoque al pedirlo, precisamente para no perder por accidente
+// la cuenta de alguien que sí pagó.
+app.delete('/api/admin/usuarios/:id', authenticateToken, async (req, res) => {
+    try {
+        const users = db.collection('users');
+        const yo = await users.findOne({ _id: new ObjectId(req.user.userId) });
+        if (!yo || yo.creditosIlimitados !== true) {
+            return res.status(403).json({ error: 'No autorizado' });
+        }
+
+        let objetivoId;
+        try { objetivoId = new ObjectId(req.params.id); } catch (e) {
+            return res.status(400).json({ error: 'Cuenta no válida' });
+        }
+        if (objetivoId.equals(yo._id)) {
+            return res.status(400).json({ error: 'No puedes borrar tu propia cuenta desde aquí.' });
+        }
+        const objetivo = await users.findOne({ _id: objetivoId });
+        if (!objetivo) return res.status(404).json({ error: 'Cuenta no encontrada' });
+        if (objetivo.creditosIlimitados === true) {
+            return res.status(400).json({ error: 'Esa cuenta tiene créditos ilimitados, no se puede borrar desde aquí.' });
+        }
+
+        const tienePagos = await db.collection('compras').findOne({ userId: objetivoId, estado: 'APROBADA' });
+        if (tienePagos) {
+            return res.status(400).json({ error: 'Esta cuenta tiene compras aprobadas -- es un cliente real, no se puede borrar desde aquí.' });
+        }
+
+        await users.deleteOne({ _id: objetivoId });
+        await db.collection('messages').deleteMany({ userId: objetivoId });
+        await db.collection('proyectos').deleteMany({ userId: objetivoId });
+        await db.collection('resumenes').deleteMany({ userId: objetivoId });
+        res.json({ eliminado: true });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos borrar la cuenta.', error, 'admin-borrar-usuario');
     }
 });
 
