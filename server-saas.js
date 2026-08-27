@@ -2664,6 +2664,28 @@ app.post('/api/comprar', authenticateToken, async (req, res) => {
     }
 });
 
+// Al volver del checkout de Wompi (?compra=REFERENCIA) el front usa esto
+// para mandarle a Google Analytics el monto real de la compra ya aprobada
+// (evento "purchase") -- sin esto solo se sabria que "algo paso", no cuanto
+// vendio de verdad.
+app.get('/api/compra-info', authenticateToken, async (req, res) => {
+    try {
+        const referencia = typeof req.query.referencia === 'string' ? req.query.referencia : '';
+        if (!referencia) return res.status(400).json({ error: 'Falta la referencia' });
+        const userId = new ObjectId(req.user.userId);
+        const compra = await db.collection('compras').findOne({ referencia, userId, estado: 'APROBADA' });
+        if (!compra) return res.status(404).json({ error: 'Compra no encontrada' });
+        res.json({
+            referencia: compra.referencia,
+            paquete: compra.paquete,
+            creditos: compra.creditos,
+            montoEnCentavos: compra.montoEnCentavos
+        });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos consultar la compra.', error, 'compra-info');
+    }
+});
+
 app.post('/api/webhook', async (req, res) => {
     try {
         if (!WOMPI_CONFIGURADO) return res.status(503).json({ error: 'No configurado' });
