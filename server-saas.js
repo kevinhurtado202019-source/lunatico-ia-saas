@@ -489,7 +489,10 @@ async function actualizarResumenSiHaceFalta(db, userId, proyectoId) {
             .toArray();
         // Todavia no se lleno la ventana visible: no hay nada mas viejo que
         // se este quedando afuera, asi que no hay nada que resumir.
-        if (recientes.length < MENSAJES_DE_HISTORIAL) return;
+        if (recientes.length < MENSAJES_DE_HISTORIAL) {
+            console.log('resumen: aun no hay ' + MENSAJES_DE_HISTORIAL + ' mensajes (van ' + recientes.length + '), nada que resumir todavia');
+            return;
+        }
 
         const resumenActual = await resumenes.findOne(filtro);
         const corteVisible = recientes[recientes.length - 1].createdAt;
@@ -500,7 +503,11 @@ async function actualizarResumenSiHaceFalta(db, userId, proyectoId) {
             createdAt: { $lt: corteVisible, $gt: desde }
         }).sort({ createdAt: 1 }).toArray();
 
-        if (pendientes.length < UMBRAL_MENSAJES_PARA_RESUMIR) return;
+        if (pendientes.length < UMBRAL_MENSAJES_PARA_RESUMIR) {
+            console.log('resumen: ' + pendientes.length + ' mensajes viejos pendientes, faltan para llegar a ' + UMBRAL_MENSAJES_PARA_RESUMIR);
+            return;
+        }
+        console.log('resumen: generando/actualizando con ' + pendientes.length + ' mensajes pendientes...');
 
         const textoPendientes = pendientes.map((m) => {
             const contenido = typeof m.content === 'string' ? m.content : '[mensaje con adjunto]';
@@ -530,6 +537,7 @@ async function actualizarResumenSiHaceFalta(db, userId, proyectoId) {
                 actualizadoEn: new Date()
             }
         }, { upsert: true });
+        console.log('resumen: actualizado (' + nuevoResumen.trim().length + ' caracteres): ' + nuevoResumen.trim().slice(0, 200));
     } catch (error) {
         console.error('✗ actualizarResumen:', (error && error.message) || error);
     }
