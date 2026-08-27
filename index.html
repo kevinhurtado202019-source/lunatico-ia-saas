@@ -179,6 +179,10 @@
      suave cerca de donde suele caer el titular ayuda a la legibilidad. */
   .hero-fondo {
     position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    /* inset:0 deberia bastar, pero se refuerza con --vh de todas formas: en
+       la PWA de iPhone se vio el lienzo de las estrellas quedandose corto
+       justo en la franja de mas abajo. */
+    height: 100vh; height: 100dvh; height: calc(var(--vh, 1vh) * 100);
   }
   .hero-fondo::after {
     content: ""; position: absolute; inset: 0;
@@ -461,7 +465,12 @@
 
   /* ===================== APP ===================== */
 
-  #app { position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column; }
+  #app {
+    position: relative; z-index: 1; display: flex; flex-direction: column;
+    /* Directo contra --vh, sin depender de que 100% se herede bien desde
+       html/body -- mismo respaldo que la franja negra de mas arriba. */
+    height: 100%; height: 100dvh; height: calc(var(--vh, 1vh) * 100);
+  }
 
   header.barra {
     flex: none;
