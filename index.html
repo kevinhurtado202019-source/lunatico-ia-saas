@@ -628,13 +628,14 @@
   .turno.ia .texto .acciones-codigo {
     position: absolute; top: 8px; right: 8px; z-index: 1; display: flex; gap: 6px;
   }
-  .turno.ia .texto .copiar-codigo, .turno.ia .texto .descargar-codigo, .turno.ia .texto .vista-previa-codigo {
+  .turno.ia .texto .copiar-codigo, .turno.ia .texto .descargar-codigo,
+  .turno.ia .texto .vista-previa-codigo, .turno.ia .texto .publicar-codigo {
     background: var(--noche); color: var(--tenue); border: 1px solid var(--borde-suave);
     border-radius: 6px; padding: 4px 10px; font-size: .75em; font-family: var(--ui);
     cursor: pointer; transition: color .15s, border-color .15s;
   }
   .turno.ia .texto .copiar-codigo:hover, .turno.ia .texto .descargar-codigo:hover,
-  .turno.ia .texto .vista-previa-codigo:hover { color: var(--texto); border-color: var(--luna); }
+  .turno.ia .texto .vista-previa-codigo:hover, .turno.ia .texto .publicar-codigo:hover { color: var(--texto); border-color: var(--luna); }
   .turno.ia .texto .copiar-codigo.copiado { color: var(--luna); border-color: var(--luna); }
   .turno.ia .texto .vista-previa-frame {
     display: block; width: 100%; height: 380px; margin-top: 8px;
@@ -2445,6 +2446,46 @@
     boton.textContent = 'Ocultar vista previa';
   };
 
+  // Publica el HTML como pagina de verdad, con su propio link para abrir en
+  // cualquier navegador (a diferencia de "Vista previa", que solo se ve
+  // dentro del chat). El servidor la sirve sin JavaScript, por seguridad --
+  // ver el comentario junto a /api/publicar-pagina en server-saas.js.
+  window.publicarPagina = function (boton) {
+    var caja = boton.closest('.bloque-codigo');
+    var code = caja && caja.querySelector('pre code');
+    if (!code) return;
+    var textoOriginal = boton.textContent;
+    boton.disabled = true; boton.textContent = 'Publicando…';
+    api('/api/publicar-pagina', {
+      method: 'POST',
+      body: JSON.stringify({ html: code.textContent || '' })
+    }).then(function (r) {
+      boton.disabled = false;
+      if (!r.res.ok) {
+        boton.textContent = (r.data && r.data.error) || 'No se pudo publicar';
+        setTimeout(function () { boton.textContent = textoOriginal; }, 2500);
+        return;
+      }
+      var link = r.data.link;
+      function marcarCopiado() {
+        boton.textContent = '¡Copiado!';
+        setTimeout(function () { boton.textContent = textoOriginal; }, 1600);
+      }
+      if (navigator.share) {
+        navigator.share({ title: 'LunaticoIA', url: link }).catch(function () {});
+        boton.textContent = textoOriginal;
+      } else if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link).then(marcarCopiado, function () {
+          copiarConFallback(link, marcarCopiado);
+        });
+      } else {
+        copiarConFallback(link, marcarCopiado);
+      }
+    }).catch(function () {
+      boton.disabled = false; boton.textContent = textoOriginal;
+    });
+  };
+
   // Markdown minimo (parrafos, **negrita**, *cursiva*, `codigo`, ```bloques```,
   // listas y # encabezados) para que las respuestas se vean como las de un
   // chat serio y no como texto plano. Todo se escapa antes de formatear, asi
@@ -2462,6 +2503,7 @@
         '<div class="bloque-codigo">' +
           '<div class="acciones-codigo">' +
             (esHtml ? '<button type="button" class="vista-previa-codigo" onclick="alternarVistaPrevia(this)" aria-label="Ver la pagina renderizada">Vista previa</button>' : '') +
+            (esHtml ? '<button type="button" class="publicar-codigo" onclick="publicarPagina(this)" aria-label="Publicar como pagina con link propio">Publicar página</button>' : '') +
             '<button type="button" class="descargar-codigo" onclick="descargarCodigo(this)" data-ext="' + esc(ext) + '" aria-label="Descargar código">Descargar</button>' +
             '<button type="button" class="copiar-codigo" onclick="copiarCodigo(this)" aria-label="Copiar código">Copiar</button>' +
           '</div>' +

@@ -946,6 +946,7 @@ async function connectDatabase() {
         const proyectos = db.collection('proyectos');
         const compartidos = db.collection('compartidos');
         const resumenes = db.collection('resumenes');
+        const paginas = db.collection('paginas');
 
         await users.createIndex({ email: 1 }, { unique: true });
         await users.createIndex({ verificationToken: 1 }, { sparse: true });
@@ -956,6 +957,7 @@ async function connectDatabase() {
         await proyectos.createIndex({ userId: 1, createdAt: -1 });
         await compartidos.createIndex({ codigo: 1 }, { unique: true });
         await resumenes.createIndex({ userId: 1, proyectoId: 1 }, { unique: true });
+        await paginas.createIndex({ codigo: 1 }, { unique: true });
 
         console.log('✓ MongoDB connected successfully');
     } catch (error) {
@@ -1907,6 +1909,79 @@ app.get('/api/compartido/:codigo', async (req, res) => {
         res.json({ mensajeUsuario: doc.mensajeUsuario, respuestaIA: doc.respuestaIA, creadoEn: doc.createdAt });
     } catch (error) {
         fallo(res, 500, 'No pudimos cargar esta respuesta compartida.', error, 'compartido');
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Publicar paginas HTML (link real, para abrir en cualquier navegador)
+//
+// A diferencia de "Compartir" (que guarda texto y lo renderiza DENTRO del
+// propio chat), esto guarda el HTML tal cual y lo sirve como pagina de
+// verdad en su propia URL, para abrirla en cualquier navegador o mandarsela
+// a alguien.
+//
+// Se sirve SIN JavaScript (Content-Security-Policy que bloquea scripts por
+// completo), a proposito: la pagina publicada vive en el MISMO dominio que
+// el resto de LunaticoIA, y el token de sesion se guarda en localStorage
+// (no en una cookie httpOnly) -- si se dejara correr JavaScript ahi, una
+// pagina generada por la IA podria robar la sesion de quien la abra estando
+// loggeado. Sin scripts, eso no es posible, sin importar que traiga el HTML.
+// ---------------------------------------------------------------------------
+
+const MAX_CARACTERES_PAGINA_PUBLICADA = 300000;
+
+const publicarPaginaLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, max: 30,
+    standardHeaders: true, legacyHeaders: false,
+    message: { error: 'Demasiadas páginas publicadas. Espera un poco.' }
+});
+
+app.post('/api/publicar-pagina', publicarPaginaLimiter, authenticateToken, async (req, res) => {
+    try {
+        const html = typeof req.body.html === 'string' ? req.body.html.trim() : '';
+        if (!html) return res.status(400).json({ error: 'No hay ninguna página que publicar' });
+        if (html.length > MAX_CARACTERES_PAGINA_PUBLICADA) {
+            return res.status(400).json({ error: 'Esa página es demasiado grande para publicarla.' });
+        }
+
+        const paginas = db.collection('paginas');
+        const nuevoId = new ObjectId();
+        const codigo = nuevoId.toString().slice(-10);
+        await paginas.insertOne({
+            _id: nuevoId,
+            codigo,
+            userId: new ObjectId(req.user.userId),
+            html,
+            createdAt: new Date()
+        });
+
+        res.json({ codigo, link: `${req.protocol}://${req.get('host')}/paginas/${codigo}` });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos publicar esa página.', error, 'publicar-pagina');
+    }
+});
+
+const PAGINA_NO_DISPONIBLE = '<!doctype html><meta charset="utf-8"><title>LunaticoIA</title>' +
+    '<body style="font-family:sans-serif;text-align:center;padding:60px 20px;color:#666">' +
+    'Esta página ya no está disponible.</body>';
+
+app.get('/paginas/:codigo', async (req, res) => {
+    // Bloquea scripts del todo (ver explicacion arriba) pero deja cargar
+    // imagenes/fuentes de cualquier lado -- sin esto, COEP (que Helmet
+    // activa por defecto para el resto del sitio) bloqueaba imagenes
+    // externas que la pagina generada quisiera mostrar.
+    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'none'; style-src 'unsafe-inline' https: data:; img-src * data: blob:; font-src * data:; media-src * data: blob:;");
+    res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    try {
+        const paginas = db.collection('paginas');
+        const doc = await paginas.findOne({ codigo: req.params.codigo });
+        if (!doc) return res.status(404).type('html').send(PAGINA_NO_DISPONIBLE);
+        res.type('html').send(doc.html);
+    } catch (error) {
+        console.error('✗ paginas/:codigo:', (error && error.message) || error);
+        res.status(500).type('html').send(PAGINA_NO_DISPONIBLE);
     }
 });
 
