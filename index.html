@@ -577,6 +577,22 @@
   .turno.ia .texto { font-size: 16.5px; line-height: 1.72; max-width: 34em; }
   .turno.ia .quien { color: var(--luna-viva); }
 
+  .bloque-preguntar {
+    margin-top: 14px; max-width: 34em;
+    background: var(--superficie); border: 1px solid var(--borde-suave);
+    border-radius: var(--r); padding: 14px 16px;
+  }
+  .preguntar-texto { font-weight: 600; font-size: 15px; margin: 0 0 6px; }
+  .preguntar-opciones { display: flex; flex-direction: column; }
+  .preguntar-opcion {
+    text-align: left; padding: 11px 2px; border-bottom: 1px solid var(--borde-suave);
+    color: var(--texto); font-size: 14.5px; transition: color .15s;
+  }
+  .preguntar-opciones .preguntar-opcion:last-child { border-bottom: none; }
+  .preguntar-opcion:hover:not(:disabled) { color: var(--luna-viva); }
+  .preguntar-opcion:disabled { opacity: .5; }
+  .preguntar-opcion.elegida { color: var(--luna-viva); font-weight: 600; opacity: 1; }
+
   .imagen-mensaje {
     display: block; max-width: 100%; max-height: 260px; border-radius: 10px;
     margin-bottom: 8px;
@@ -2312,6 +2328,37 @@
     caja.insertBefore(btn, caja.firstChild);
   }
 
+  // Pregunta con botones: en vez de escribir la respuesta, se toca una
+  // opcion y se manda sola, como si se hubiera escrito a mano -- ver
+  // extraerPreguntar en el servidor para el formato que dispara esto.
+  function pintarPreguntar(caja, preguntar) {
+    var cont = document.createElement('div');
+    cont.className = 'bloque-preguntar';
+    var texto = document.createElement('p');
+    texto.className = 'preguntar-texto';
+    texto.textContent = preguntar.pregunta;
+    var opciones = document.createElement('div');
+    opciones.className = 'preguntar-opciones';
+    preguntar.opciones.forEach(function (opcion) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'preguntar-opcion';
+      btn.textContent = opcion;
+      btn.onclick = function () {
+        if (enviando) return;
+        var botones = opciones.querySelectorAll('button');
+        for (var i = 0; i < botones.length; i++) botones[i].disabled = true;
+        btn.classList.add('elegida');
+        $('entrada').value = opcion;
+        window.enviar();
+      };
+      opciones.appendChild(btn);
+    });
+    cont.appendChild(texto);
+    cont.appendChild(opciones);
+    caja.appendChild(cont);
+  }
+
   // Si la imagen que encontró la IA no carga (link roto, el sitio bloqueó la
   // carga desde fuera, etc.) se reemplaza el bloque entero por un aviso, en
   // vez de dejar el ícono de imagen rota de siempre.
@@ -2963,6 +3010,9 @@
               if (enListaTitulo) enListaTitulo.nombre = json.tituloNuevo;
               actualizarChipProyecto();
             }
+            // Pregunta con botones (ver extraerPreguntar en el servidor):
+            // en vez de escribir la respuesta, se toca una opcion.
+            if (json.preguntar) pintarPreguntar(esperando.caja, json.preguntar);
 
             var c = json.consumo;
             if (c) {

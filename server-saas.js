@@ -135,6 +135,26 @@ const SYSTEM_PROMPT_BASE = [
         'mas y hazlo directo, sin pedir permiso para cada paso. Solo paras ' +
         'cuando ya tienes con que dar una respuesta completa, o cuando se ' +
         'te acaban los usos disponibles de una herramienta.',
+    '',
+    'Si para seguir ayudando necesitas que la persona elija entre un grupo ' +
+        'CHICO y CONCRETO de opciones (2 a 6) -- por ejemplo un lenguaje de ' +
+        'programacion puntual, un estilo entre pocas alternativas claras, o ' +
+        'cualquier decision con opciones nombrables en pocas palabras -- en ' +
+        'vez de solo preguntarlo en texto plano, termina tu respuesta con un ' +
+        'bloque asi (nada mas texto despues de ese bloque):\n' +
+        '```preguntar\n' +
+        'Aca va la pregunta corta\n' +
+        'Primera opcion\n' +
+        'Segunda opcion\n' +
+        'Tercera opcion\n' +
+        '```\n' +
+        'La primera linea adentro del bloque es la pregunta; cada linea ' +
+        'siguiente es una opcion (una por linea, sin numerarlas ni ponerles ' +
+        'guion). Eso se convierte en botones para tocar, asi la persona no ' +
+        'tiene que escribir la respuesta. USALO CON MODERACION: la mayoria ' +
+        'de las preguntas siguen siendo mejor en texto normal -- resérvalo ' +
+        'para cuando de verdad haya un puñado corto y claro de opciones ' +
+        'nombrables, nunca para preguntas abiertas.',
 ].concat(IMAGEN_CONFIGURADA ? [
     '',
     'Si te piden una imagen o foto de algo real (una ciudad, un lugar, una ' +
@@ -665,6 +685,28 @@ function quitarEmojis(texto) {
         .replace(/[ \t]+\n/g, '\n')
         .replace(/[ \t]{2,}/g, ' ')
         .trimEnd();
+}
+
+const MAX_OPCIONES_PREGUNTAR = 6;
+
+// Saca el bloque ```preguntar (ver SYSTEM_PROMPT_BASE) del texto de la
+// respuesta, si lo hay, y lo convierte en {pregunta, opciones} para que el
+// front lo pinte como botones. Se quita del texto ANTES de guardar en Mongo
+// y de mandarlo al cliente -- nunca se ve el bloque crudo, ni ahora ni al
+// recargar el historial despues.
+function extraerPreguntar(texto) {
+    const coincidencia = texto.match(/```preguntar\r?\n([\s\S]*?)```/);
+    if (!coincidencia) return { texto, preguntar: null };
+
+    const lineas = coincidencia[1].split('\n').map((l) => l.trim()).filter(Boolean);
+    const pregunta = (lineas[0] || '').slice(0, 200);
+    const opciones = lineas.slice(1, 1 + MAX_OPCIONES_PREGUNTAR)
+        .map((l) => l.replace(/^[-*]\s*/, '').slice(0, 80))
+        .filter(Boolean);
+
+    const textoLimpio = (texto.slice(0, coincidencia.index) + texto.slice(coincidencia.index + coincidencia[0].length)).trim();
+    if (!pregunta || opciones.length < 2) return { texto: textoLimpio, preguntar: null };
+    return { texto: textoLimpio, preguntar: { pregunta, opciones } };
 }
 
 // Respaldo garantizado, igual que quitarEmojis: el system prompt le prohibe
@@ -2170,6 +2212,10 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         );
         if (!tieneInstruccionesPropias) aiMessage = quitarEmojis(aiMessage);
 
+        const extraidoPreguntar = extraerPreguntar(aiMessage);
+        aiMessage = extraidoPreguntar.texto;
+        const preguntar = extraidoPreguntar.preguntar;
+
         // Si la respuesta se corto (llego al limite de tokens, Anthropic la
         // pauso a mitad de una busqueda/ejecucion de codigo larga, o se
         // agotaron las rondas de buscar_imagen sin llegar a una respuesta
@@ -2178,7 +2224,10 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         // avisa explicito.
         const rondasAgotadas = response.stop_reason === 'tool_use';
         const cortada = response.stop_reason === 'max_tokens' || response.stop_reason === 'pause_turn' || rondasAgotadas;
-        if (!aiMessage && !cortada) throw new Error('Invalid response from Claude API');
+        // Si la respuesta era SOLO el bloque ```preguntar (nada de texto
+        // antes), aiMessage queda vacio al sacarlo -- no es un error, el
+        // contenido real va en "preguntar", que el front pinta como botones.
+        if (!aiMessage && !preguntar && !cortada) throw new Error('Invalid response from Claude API');
         if (cortada) {
             aiMessage += (aiMessage ? '\n\n' : '') + '⚠️ *La respuesta se cortó antes de terminar' +
                 (response.stop_reason === 'max_tokens' ? ' (llegó al límite de longitud)'
@@ -2205,8 +2254,15 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             content: contenidoUsuario,
             createdAt: guardadoEn
         });
+        // En vivo, "preguntar" se pinta como botones (ver mas abajo); para el
+        // historial (si se recarga o se vuelve mas tarde) se guarda como
+        // texto plano legible en vez de perder la pregunta por completo.
+        const contenidoParaGuardar = preguntar
+            ? aiMessage + (aiMessage ? '\n\n' : '') + preguntar.pregunta + '\n' +
+                preguntar.opciones.map((o) => '- ' + o).join('\n')
+            : aiMessage;
         const insertadoAsistente = await messages.insertOne({
-            userId, proyectoId, role: 'assistant', content: aiMessage,
+            userId, proyectoId, role: 'assistant', content: contenidoParaGuardar,
             modelo: claveModelo,
             createdAt: new Date(guardadoEn.getTime() + 1)
         });
@@ -2245,6 +2301,7 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             idUsuario: insertadoUsuario.insertedId.toString(),
             idAsistente: insertadoAsistente.insertedId.toString(),
             tituloNuevo: tituloNuevo,
+            preguntar: preguntar,
             consumo: {
                 modelo: modelo.etiqueta,
                 tokensEntrada: usoAcumulado.input_tokens,
