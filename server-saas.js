@@ -873,6 +873,10 @@ function firmaIntegridad(referencia, montoEnCentavos, moneda) {
 const CORREO_CONFIGURADO = Boolean(process.env.RESEND_API_KEY);
 const CORREO_REMITENTE = process.env.SMTP_FROM;
 const VENCIMIENTO_VERIFICACION_MS = 24 * 60 * 60 * 1000;
+
+// WhatsApp (WhatsApp Cloud API de Meta) como canal adicional para chatear
+// con la IA -- ver la seccion completa mas abajo, junto al webhook.
+const WHATSAPP_CONFIGURADO = Boolean(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_ID);
 const VENCIMIENTO_RESET_MS = 60 * 60 * 1000;
 // Un intercambio tipico ronda los 3,6 creditos en modo Rapido (ver
 // CRED_POR_MSG en index.html) -- 30 creditos son mas o menos 8 mensajes de
@@ -1328,6 +1332,8 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
             maxCaracteresInstrucciones: MAX_CARACTERES_INSTRUCCIONES,
             memoriaCuenta: (memoriaCuentaDoc && memoriaCuentaDoc.resumen) || '',
             maxCaracteresMemoriaCuenta: MAX_CARACTERES_MEMORIA_CUENTA,
+            telefono: user.telefono || '',
+            whatsappConfigurado: WHATSAPP_CONFIGURADO,
             codigoReferido: user.codigoReferido,
             creditosBonoReferido: CREDITOS_BONO_REFERIDO,
             referidosExitosos: user.referidosExitosos || 0,
@@ -1885,6 +1891,199 @@ app.get('/api/mensajes/buscar', authenticateToken, async (req, res) => {
 // Chat
 // ---------------------------------------------------------------------------
 
+// El corazon de una respuesta de la IA -- historial, llamada a Claude con
+// herramientas, cobro de creditos, guardado en Mongo -- sacado de la ruta
+// /api/chat para que WhatsApp (ver mas abajo) pueda usar exactamente la
+// misma logica sin duplicarla. onDelta es opcional: /api/chat lo usa para
+// ir escribiendo por SSE a medida que llega texto; sin el, simplemente se
+// espera la respuesta completa (asi la llama WhatsApp, que no hace streaming).
+async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActual, mensajeTexto, contenidoUsuario, claveModelo, onDelta }) {
+    const modelo = MODELOS[claveModelo];
+    const messages = db.collection('messages');
+    const proyectosCol = db.collection('proyectos');
+    const users = db.collection('users');
+    const ilimitado = user.creditosIlimitados === true;
+
+    const resumenDoc = await db.collection('resumenes').findOne({ userId, proyectoId });
+    const memoriaCuentaDoc = await db.collection('memoriaCuenta').findOne({ userId });
+
+    const history = await messages
+        .find({ userId, proyectoId })
+        .sort({ createdAt: -1, _id: -1 })
+        .limit(MENSAJES_DE_HISTORIAL)
+        .toArray();
+    const esPrimerMensajeDelChat = history.length === 0;
+
+    let messagesForClaude = history
+        .reverse()
+        .map((m) => ({ role: m.role, content: m.content }));
+
+    // La API exige que el historial empiece por un turno de usuario.
+    while (messagesForClaude.length && messagesForClaude[0].role !== 'user') {
+        messagesForClaude.shift();
+    }
+
+    let yaSeMandoUnAdjuntoDelHistorial = false;
+    for (let i = messagesForClaude.length - 1; i >= 0; i--) {
+        const contenido = messagesForClaude[i].content;
+        if (!Array.isArray(contenido)) continue;
+        if (!yaSeMandoUnAdjuntoDelHistorial) {
+            yaSeMandoUnAdjuntoDelHistorial = true;
+            continue;
+        }
+        const textoBloque = (contenido.find((b) => b.type === 'text') || {}).text || '';
+        const tuvoImagen = contenido.some((b) => b.type === 'image');
+        const tuvoDocumento = contenido.some((b) => b.type === 'document');
+        const aviso = tuvoImagen ? '[imagen adjunta] ' : tuvoDocumento ? '[PDF adjunto] ' : '';
+        messagesForClaude[i].content = aviso + textoBloque;
+    }
+
+    messagesForClaude.push({ role: 'user', content: contenidoUsuario });
+
+    let mensajesRonda = messagesForClaude;
+    let aiMessage = '';
+    let response = null;
+    let imagenesLlamadas = 0;
+    const urlsImagenValidas = new Set();
+    const usoAcumulado = { input_tokens: 0, output_tokens: 0, server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 } };
+    const MAX_RONDAS_TOTAL = MAX_RONDAS_BUSCAR_IMAGEN + 1;
+    const systemPrompt = construirSystemPrompt(user, proyectoActual, resumenDoc && resumenDoc.resumen, memoriaCuentaDoc && memoriaCuentaDoc.resumen);
+
+    for (let ronda = 1; ronda <= MAX_RONDAS_TOTAL; ronda++) {
+        const stream = claudeClient.messages.stream({
+            model: modelo.id,
+            max_tokens: MAX_TOKENS_RESPUESTA,
+            system: systemPrompt,
+            messages: mensajesRonda,
+            tools: HERRAMIENTAS_PARA_CHAT
+        });
+        if (onDelta) stream.on('text', onDelta);
+
+        response = await stream.finalMessage();
+
+        // Con herramientas de por medio la respuesta trae varios bloques de
+        // texto intercalados con los de busqueda/lectura/codigo -- hay que
+        // juntarlos todos, no solo quedarse con el primero.
+        if (response.content && Array.isArray(response.content)) {
+            aiMessage += response.content.filter((i) => i.type === 'text').map((i) => i.text).join('');
+        }
+
+        const usoRonda = response.usage || {};
+        usoAcumulado.input_tokens += usoRonda.input_tokens || 0;
+        usoAcumulado.output_tokens += usoRonda.output_tokens || 0;
+        usoAcumulado.server_tool_use.web_search_requests += (usoRonda.server_tool_use && usoRonda.server_tool_use.web_search_requests) || 0;
+        usoAcumulado.server_tool_use.web_fetch_requests += (usoRonda.server_tool_use && usoRonda.server_tool_use.web_fetch_requests) || 0;
+
+        const contenidoRonda = Array.isArray(response.content) ? response.content : [];
+        const llamadasImagen = contenidoRonda.filter((b) => b.type === 'tool_use' && b.name === 'buscar_imagen');
+        if (!llamadasImagen.length) break;
+        if (ronda === MAX_RONDAS_TOTAL) break;
+
+        mensajesRonda = mensajesRonda.concat([{ role: 'assistant', content: contenidoRonda }]);
+        const resultadosTool = await Promise.all(llamadasImagen.map(async (llamada) => {
+            imagenesLlamadas++;
+            const consulta = (llamada.input && llamada.input.consulta) || '';
+            try {
+                const resultados = await buscarImagenSerper(consulta);
+                resultados.forEach((r) => urlsImagenValidas.add(r.url));
+                const texto = resultados.length
+                    ? 'Resultados de imagenes para "' + consulta + '":\n' +
+                        resultados.map((r, idx) => (idx + 1) + '. ' + r.url + (r.titulo ? ' -- "' + r.titulo + '"' : '')).join('\n')
+                    : 'No se encontraron fotos reales para esa busqueda.';
+                return { type: 'tool_result', tool_use_id: llamada.id, content: texto };
+            } catch (errorBusqueda) {
+                console.error('✗ buscar_imagen:', (errorBusqueda && errorBusqueda.message) || errorBusqueda);
+                return {
+                    type: 'tool_result', tool_use_id: llamada.id, is_error: true,
+                    content: 'La busqueda de imagenes fallo por un problema tecnico. Avisale a la persona que no se pudo buscar la foto ahora mismo.'
+                };
+            }
+        }));
+        mensajesRonda = mensajesRonda.concat([{ role: 'user', content: resultadosTool }]);
+    }
+
+    const teniaContenidoAntes = !!aiMessage.trim();
+    aiMessage = quitarImagenesInventadas(aiMessage, urlsImagenValidas);
+    if (teniaContenidoAntes && !aiMessage.trim()) {
+        aiMessage = 'No encontré ninguna foto real que sirviera para eso.';
+    }
+
+    const tieneInstruccionesPropias = !!(
+        (proyectoActual && typeof proyectoActual.instrucciones === 'string' && proyectoActual.instrucciones.trim()) ||
+        (user && typeof user.instrucciones === 'string' && user.instrucciones.trim())
+    );
+    if (!tieneInstruccionesPropias) aiMessage = quitarEmojis(aiMessage);
+
+    const extraidoPreguntar = extraerPreguntar(aiMessage);
+    aiMessage = extraidoPreguntar.texto;
+    const preguntar = extraidoPreguntar.preguntar;
+
+    const rondasAgotadas = response.stop_reason === 'tool_use';
+    const cortada = response.stop_reason === 'max_tokens' || response.stop_reason === 'pause_turn' || rondasAgotadas;
+    if (!aiMessage && !preguntar && !cortada) throw new Error('Invalid response from Claude API');
+    if (cortada) {
+        aiMessage += (aiMessage ? '\n\n' : '') + '⚠️ *La respuesta se cortó antes de terminar' +
+            (response.stop_reason === 'max_tokens' ? ' (llegó al límite de longitud)'
+                : rondasAgotadas ? ' (se hicieron demasiadas búsquedas de imagen en un mismo mensaje)'
+                : ' (una búsqueda o ejecución de código larga quedó a medias)') +
+            '. Escribe "continúa" para que siga.*';
+    }
+
+    // Se cobra DESPUES de una respuesta correcta: si la API falla, el
+    // usuario no pierde saldo.
+    const cobro = creditosDe(usoAcumulado, modelo.multiplicador) + imagenesLlamadas * CREDITOS_POR_IMAGEN;
+    const nuevoSaldo = ilimitado ? user.creditBalance : Math.max(0, user.creditBalance - cobro);
+
+    const guardadoEn = new Date();
+    const insertadoUsuario = await messages.insertOne({
+        userId, proyectoId, role: 'user',
+        content: contenidoUsuario,
+        createdAt: guardadoEn
+    });
+    const contenidoParaGuardar = preguntar
+        ? aiMessage + (aiMessage ? '\n\n' : '') + preguntar.pregunta + '\n' +
+            preguntar.opciones.map((o) => '- ' + o).join('\n')
+        : aiMessage;
+    const insertadoAsistente = await messages.insertOne({
+        userId, proyectoId, role: 'assistant', content: contenidoParaGuardar,
+        modelo: claveModelo,
+        createdAt: new Date(guardadoEn.getTime() + 1)
+    });
+
+    let tituloNuevo = null;
+    if (proyectoId) {
+        const cambios = { ultimaActividad: guardadoEn };
+        if (proyectoActual && proyectoActual.tipo === 'chat' && esPrimerMensajeDelChat) {
+            tituloNuevo = await generarTituloChat(mensajeTexto);
+            cambios.nombre = tituloNuevo;
+        }
+        await proyectosCol.updateOne({ _id: proyectoId }, { $set: cambios });
+    }
+
+    if (!ilimitado) {
+        await users.updateOne({ _id: userId }, { $set: { creditBalance: nuevoSaldo } });
+        // Aviso de saldo bajo: solo en el momento exacto en que CRUZA el
+        // umbral hacia abajo, no en cada mensaje mientras siga bajo. Las
+        // cuentas nacidas por WhatsApp tienen un correo sintetico que nadie
+        // lee (ver crearUsuarioWhatsApp) -- mandarles el correo seria un
+        // gasto de API sin ningun destinatario real del otro lado.
+        if (!user.cuentaWhatsapp && user.creditBalance >= UMBRAL_SALDO_BAJO && nuevoSaldo < UMBRAL_SALDO_BAJO) {
+            enviarSaldoBajo(req, user.email, user.name, nuevoSaldo);
+        }
+    }
+
+    // En segundo plano, sin retrasar la respuesta ya lista.
+    actualizarResumenSiHaceFalta(db, userId, proyectoId);
+    actualizarMemoriaCuentaSiHaceFalta(db, userId);
+
+    return {
+        aiMessage, preguntar, cortada, usoAcumulado, imagenesLlamadas, cobro, nuevoSaldo, ilimitado, modelo,
+        idUsuario: insertadoUsuario.insertedId.toString(),
+        idAsistente: insertadoAsistente.insertedId.toString(),
+        tituloNuevo
+    };
+}
+
 app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
     try {
         const { message, imagen, documento, archivoTexto, archivoOficina, archivoZip } = req.body;
@@ -2001,7 +2200,6 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         const modelo = MODELOS[claveModelo];
 
         const users = db.collection('users');
-        const messages = db.collection('messages');
         const proyectosCol = db.collection('proyectos');
         const userId = new ObjectId(req.user.userId);
 
@@ -2040,49 +2238,6 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             });
         }
 
-        const resumenDoc = await db.collection('resumenes').findOne({ userId, proyectoId });
-        const memoriaCuentaDoc = await db.collection('memoriaCuenta').findOne({ userId });
-
-        const history = await messages
-            .find({ userId, proyectoId })
-            .sort({ createdAt: -1, _id: -1 })
-            .limit(MENSAJES_DE_HISTORIAL)
-            .toArray();
-        const esPrimerMensajeDelChat = history.length === 0;
-
-        let messagesForClaude = history
-            .reverse()
-            .map((m) => ({ role: m.role, content: m.content }));
-
-        // La API exige que el historial empiece por un turno de usuario.
-        while (messagesForClaude.length && messagesForClaude[0].role !== 'user') {
-            messagesForClaude.shift();
-        }
-
-        // Los adjuntos (imagen/PDF) quedan guardados en Mongo con su base64
-        // completo para que Claude los "recuerde" dentro de la ventana de
-        // historial -- pero volver a mandarlos TODOS en cada peticion, hasta
-        // MENSAJES_DE_HISTORIAL mensajes hacia atras, puede sumar decenas de
-        // MB si hubo varios adjuntos en la conversacion, y la API de Claude
-        // rechaza peticiones muy pesadas. Por eso solo se re-manda completo
-        // el adjunto MAS RECIENTE del historial; los demas se reducen a un
-        // texto plano -- el binario sigue intacto en Mongo, solo no se
-        // vuelve a mandar cada vez.
-        let yaSeMandoUnAdjuntoDelHistorial = false;
-        for (let i = messagesForClaude.length - 1; i >= 0; i--) {
-            const contenido = messagesForClaude[i].content;
-            if (!Array.isArray(contenido)) continue;
-            if (!yaSeMandoUnAdjuntoDelHistorial) {
-                yaSeMandoUnAdjuntoDelHistorial = true;
-                continue;
-            }
-            const textoBloque = (contenido.find((b) => b.type === 'text') || {}).text || '';
-            const tuvoImagen = contenido.some((b) => b.type === 'image');
-            const tuvoDocumento = contenido.some((b) => b.type === 'document');
-            const aviso = tuvoImagen ? '[imagen adjunta] ' : tuvoDocumento ? '[PDF adjunto] ' : '';
-            messagesForClaude[i].content = aviso + textoBloque;
-        }
-
         // La imagen/PDF van antes del texto (asi rinde mejor, segun la propia
         // guia de Anthropic) y como bloques, no como string; sin adjuntos se
         // manda el texto solo, igual que antes.
@@ -2097,7 +2252,6 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             }
             contenidoUsuario.push({ type: 'text', text: mensajeTexto || 'Mira este archivo.' });
         }
-        messagesForClaude.push({ role: 'user', content: contenidoUsuario });
 
         // Streaming por SSE, encendido recien cuando llega el primer texto de
         // verdad (no al arrancar la llamada): si Claude falla antes de eso
@@ -2118,188 +2272,29 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             });
         }
 
-        // buscar_imagen es una herramienta "de cliente": a diferencia de
-        // web_search/web_fetch/code_execution (que Anthropic ejecuta solo de
-        // su lado), cuando Claude la pide este servidor tiene que buscar de
-        // verdad, devolverle el resultado en un tool_result, y volver a
-        // llamarlo -- por eso este lazo, en vez de una sola llamada. Tope de
-        // MAX_RONDAS_BUSCAR_IMAGEN + 1 llamadas totales a la API para que
-        // nunca quede dando vueltas sin fin ni disparando el gasto.
-        let mensajesRonda = messagesForClaude;
-        let aiMessage = '';
-        let response = null;
-        let imagenesLlamadas = 0;
-        const urlsImagenValidas = new Set();
-        const usoAcumulado = { input_tokens: 0, output_tokens: 0, server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 } };
-        const MAX_RONDAS_TOTAL = MAX_RONDAS_BUSCAR_IMAGEN + 1;
-        const systemPrompt = construirSystemPrompt(user, proyectoActual, resumenDoc && resumenDoc.resumen, memoriaCuentaDoc && memoriaCuentaDoc.resumen);
-
-        for (let ronda = 1; ronda <= MAX_RONDAS_TOTAL; ronda++) {
-            const stream = claudeClient.messages.stream({
-                model: modelo.id,
-                max_tokens: MAX_TOKENS_RESPUESTA,
-                system: systemPrompt,
-                messages: mensajesRonda,
-                tools: HERRAMIENTAS_PARA_CHAT
-            });
-            stream.on('text', (delta) => {
+        const resultado = await procesarMensajeChat({
+            req, userId, user, proyectoId, proyectoActual, mensajeTexto, contenidoUsuario, claveModelo,
+            onDelta: (delta) => {
                 iniciarSSE();
                 res.write('data: ' + JSON.stringify({ delta }) + '\n\n');
-            });
-
-            response = await stream.finalMessage();
-
-            // Con herramientas de por medio la respuesta trae varios bloques
-            // de texto intercalados con los de busqueda/lectura/codigo (p.ej.
-            // "voy a buscar..." + resultados + la respuesta final): hay que
-            // juntarlos todos, no solo quedarse con el primero. Se van
-            // acumulando a traves de las rondas tambien.
-            if (response.content && Array.isArray(response.content)) {
-                aiMessage += response.content.filter((i) => i.type === 'text').map((i) => i.text).join('');
             }
-
-            const usoRonda = response.usage || {};
-            usoAcumulado.input_tokens += usoRonda.input_tokens || 0;
-            usoAcumulado.output_tokens += usoRonda.output_tokens || 0;
-            usoAcumulado.server_tool_use.web_search_requests += (usoRonda.server_tool_use && usoRonda.server_tool_use.web_search_requests) || 0;
-            usoAcumulado.server_tool_use.web_fetch_requests += (usoRonda.server_tool_use && usoRonda.server_tool_use.web_fetch_requests) || 0;
-
-            const contenidoRonda = Array.isArray(response.content) ? response.content : [];
-            const llamadasImagen = contenidoRonda.filter((b) => b.type === 'tool_use' && b.name === 'buscar_imagen');
-            if (!llamadasImagen.length) break; // respuesta final normal, sin pedir mas herramientas
-            if (ronda === MAX_RONDAS_TOTAL) break; // se acabaron las rondas -- se corta aca, sin resolver el tool_use pendiente
-
-            mensajesRonda = mensajesRonda.concat([{ role: 'assistant', content: contenidoRonda }]);
-            const resultadosTool = await Promise.all(llamadasImagen.map(async (llamada) => {
-                imagenesLlamadas++;
-                const consulta = (llamada.input && llamada.input.consulta) || '';
-                try {
-                    const resultados = await buscarImagenSerper(consulta);
-                    resultados.forEach((r) => urlsImagenValidas.add(r.url));
-                    const texto = resultados.length
-                        ? 'Resultados de imagenes para "' + consulta + '":\n' +
-                            resultados.map((r, idx) => (idx + 1) + '. ' + r.url + (r.titulo ? ' -- "' + r.titulo + '"' : '')).join('\n')
-                        : 'No se encontraron fotos reales para esa busqueda.';
-                    return { type: 'tool_result', tool_use_id: llamada.id, content: texto };
-                } catch (errorBusqueda) {
-                    console.error('✗ buscar_imagen:', (errorBusqueda && errorBusqueda.message) || errorBusqueda);
-                    return {
-                        type: 'tool_result', tool_use_id: llamada.id, is_error: true,
-                        content: 'La busqueda de imagenes fallo por un problema tecnico. Avisale a la persona que no se pudo buscar la foto ahora mismo.'
-                    };
-                }
-            }));
-            mensajesRonda = mensajesRonda.concat([{ role: 'user', content: resultadosTool }]);
-        }
-
-        const teniaContenidoAntes = !!aiMessage.trim();
-        aiMessage = quitarImagenesInventadas(aiMessage, urlsImagenValidas);
-        // Si lo unico que habia era una imagen inventada, no dejar el mensaje
-        // vacio (eso se veria como una respuesta rota, o dispararia el error
-        // de "respuesta invalida" de mas abajo).
-        if (teniaContenidoAntes && !aiMessage.trim()) {
-            aiMessage = 'No encontré ninguna foto real que sirviera para eso.';
-        }
-
-        // El system prompt ya pide "cero emojis" por defecto, pero el modelo
-        // (sobre todo Rapido) a veces los pone igual -- se filtran aca como
-        // respaldo garantizado. Se respeta si la persona pidio otro tono
-        // (con emojis, etc.) en sus instrucciones personalizadas -- mismo
-        // criterio que usa construirSystemPrompt para decidir si aplican.
-        const tieneInstruccionesPropias = !!(
-            (proyectoActual && typeof proyectoActual.instrucciones === 'string' && proyectoActual.instrucciones.trim()) ||
-            (user && typeof user.instrucciones === 'string' && user.instrucciones.trim())
-        );
-        if (!tieneInstruccionesPropias) aiMessage = quitarEmojis(aiMessage);
-
-        const extraidoPreguntar = extraerPreguntar(aiMessage);
-        aiMessage = extraidoPreguntar.texto;
-        const preguntar = extraidoPreguntar.preguntar;
-
-        // Si la respuesta se corto (llego al limite de tokens, Anthropic la
-        // pauso a mitad de una busqueda/ejecucion de codigo larga, o se
-        // agotaron las rondas de buscar_imagen sin llegar a una respuesta
-        // final) el usuario se quedaba viendo un mensaje a medias sin ninguna
-        // pista de que paso -- como si la IA se hubiera quedado pegada. Se
-        // avisa explicito.
-        const rondasAgotadas = response.stop_reason === 'tool_use';
-        const cortada = response.stop_reason === 'max_tokens' || response.stop_reason === 'pause_turn' || rondasAgotadas;
-        // Si la respuesta era SOLO el bloque ```preguntar (nada de texto
-        // antes), aiMessage queda vacio al sacarlo -- no es un error, el
-        // contenido real va en "preguntar", que el front pinta como botones.
-        if (!aiMessage && !preguntar && !cortada) throw new Error('Invalid response from Claude API');
-        if (cortada) {
-            aiMessage += (aiMessage ? '\n\n' : '') + '⚠️ *La respuesta se cortó antes de terminar' +
-                (response.stop_reason === 'max_tokens' ? ' (llegó al límite de longitud)'
-                    : rondasAgotadas ? ' (se hicieron demasiadas búsquedas de imagen en un mismo mensaje)'
-                    : ' (una búsqueda o ejecución de código larga quedó a medias)') +
-                '. Escribe "continúa" para que siga.*';
-        }
-
-        // Se cobra DESPUÉS de una respuesta correcta: si la API falla, el
-        // usuario no pierde saldo. Las cuentas con creditosIlimitados nunca
-        // bajan de saldo (pensadas para el propio creador de LunaticoIA).
-        // Las busquedas de imagen se cobran aparte porque Serper cobra por
-        // fuera de Anthropic, igual que CREDITOS_POR_BUSQUEDA con web_search.
-        const cobro = creditosDe(usoAcumulado, modelo.multiplicador) + imagenesLlamadas * CREDITOS_POR_IMAGEN;
-        const nuevoSaldo = ilimitado ? user.creditBalance : Math.max(0, user.creditBalance - cobro);
-
-        // Se guarda el mismo contenido que se le mando a Claude (con imagen o
-        // PDF incluidos si los hubo): asi, mientras el turno siga dentro de
-        // la ventana de historial (MENSAJES_DE_HISTORIAL), Claude los sigue
-        // "viendo" en los siguientes mensajes de la misma conversacion.
-        const guardadoEn = new Date();
-        const insertadoUsuario = await messages.insertOne({
-            userId, proyectoId, role: 'user',
-            content: contenidoUsuario,
-            createdAt: guardadoEn
         });
-        // En vivo, "preguntar" se pinta como botones (ver mas abajo); para el
-        // historial (si se recarga o se vuelve mas tarde) se guarda como
-        // texto plano legible en vez de perder la pregunta por completo.
-        const contenidoParaGuardar = preguntar
-            ? aiMessage + (aiMessage ? '\n\n' : '') + preguntar.pregunta + '\n' +
-                preguntar.opciones.map((o) => '- ' + o).join('\n')
-            : aiMessage;
-        const insertadoAsistente = await messages.insertOne({
-            userId, proyectoId, role: 'assistant', content: contenidoParaGuardar,
-            modelo: claveModelo,
-            createdAt: new Date(guardadoEn.getTime() + 1)
-        });
-
-        let tituloNuevo = null;
-        if (proyectoId) {
-            const cambios = { ultimaActividad: guardadoEn };
-            // Solo los chats sin nombre propio (no los asistentes guardados,
-            // que ya vienen con nombre puesto a mano) se titulan solos, y
-            // solo la primera vez -- las siguientes veces ya tienen titulo.
-            if (proyectoActual && proyectoActual.tipo === 'chat' && esPrimerMensajeDelChat) {
-                tituloNuevo = await generarTituloChat(mensajeTexto);
-                cambios.nombre = tituloNuevo;
-            }
-            await proyectosCol.updateOne({ _id: proyectoId }, { $set: cambios });
-        }
-
-        if (!ilimitado) {
-            await users.updateOne({ _id: userId }, { $set: { creditBalance: nuevoSaldo } });
-            // Aviso de saldo bajo: solo en el momento exacto en que CRUZA el
-            // umbral hacia abajo (antes estaba por encima, ahora por debajo),
-            // no en cada mensaje mientras siga bajo -- si no, mandaria el
-            // mismo correo una y otra vez. Si despues compra mas y lo vuelve
-            // a gastar, cruza otra vez y le llega el aviso de nuevo, que es
-            // justo lo que se quiere. No bloquea la respuesta al usuario: si
-            // el correo falla o tarda, no le afecta el chat (enviarCorreo ya
-            // atrapa sus propios errores).
-            if (user.creditBalance >= UMBRAL_SALDO_BAJO && nuevoSaldo < UMBRAL_SALDO_BAJO) {
-                enviarSaldoBajo(req, user.email, user.name, nuevoSaldo);
-            }
-        }
+        const aiMessage = resultado.aiMessage;
+        const preguntar = resultado.preguntar;
+        const cortada = resultado.cortada;
+        const usoAcumulado = resultado.usoAcumulado;
+        const imagenesLlamadas = resultado.imagenesLlamadas;
+        const cobro = resultado.cobro;
+        const nuevoSaldo = resultado.nuevoSaldo;
+        const idUsuario = resultado.idUsuario;
+        const idAsistente = resultado.idAsistente;
+        const tituloNuevo = resultado.tituloNuevo;
 
         res.write('data: ' + JSON.stringify({
             done: true,
             response: aiMessage,
-            idUsuario: insertadoUsuario.insertedId.toString(),
-            idAsistente: insertadoAsistente.insertedId.toString(),
+            idUsuario: idUsuario,
+            idAsistente: idAsistente,
             tituloNuevo: tituloNuevo,
             preguntar: preguntar,
             consumo: {
@@ -2316,12 +2311,6 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             }
         }) + '\n\n');
         res.end();
-
-        // En segundo plano, sin retrasar ni afectar la respuesta ya enviada:
-        // si se junto suficiente historial viejo, lo resume para que la
-        // memoria le alcance mas alla de MENSAJES_DE_HISTORIAL.
-        actualizarResumenSiHaceFalta(db, userId, proyectoId);
-        actualizarMemoriaCuentaSiHaceFalta(db, userId);
     } catch (error) {
         if (res.headersSent) {
             // Ya se le mando texto real al cliente (el SSE esta abierto): no se
@@ -2338,6 +2327,227 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         } else {
             fallo(res, 500, 'No pudimos generar la respuesta. No se te descontó ningún crédito.', error, 'chat');
         }
+    }
+});
+
+// ---------------------------------------------------------------------------
+// WhatsApp (WhatsApp Cloud API de Meta)
+//
+// Un canal mas para hablar con la misma IA, los mismos creditos y la misma
+// cuenta -- nunca reemplaza la web ni el APK, solo se le suma. Un numero de
+// WhatsApp que nunca escribio antes se crea una cuenta sola (con el trial
+// de siempre, sin friccion); si la persona ya tiene cuenta en la web, puede
+// vincular su WhatsApp a esa cuenta en vez de quedarse con dos saldos
+// separados (ver /api/vincular-whatsapp y el comando "vincular" mas abajo).
+//
+// Es texto puro por ahora: sin imagenes/archivos adjuntos ni cambio de
+// modelo (usa MODELO_POR_DEFECTO siempre). Reusa procesarMensajeChat, el
+// mismo motor que usa la web, asi que memoria, resumenes, asistentes
+// guardados y el titulo automatico de los chats funcionan igual.
+// ---------------------------------------------------------------------------
+
+async function enviarMensajeWhatsApp(numeroDestino, texto) {
+    const respuesta = await fetch('https://graph.facebook.com/v21.0/' + process.env.WHATSAPP_PHONE_ID + '/messages', {
+        method: 'POST',
+        headers: {
+            Authorization: 'Bearer ' + process.env.WHATSAPP_TOKEN,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to: numeroDestino,
+            type: 'text',
+            // WhatsApp corta mensajes de texto en 4096 caracteres.
+            text: { body: String(texto || '').slice(0, 4096) }
+        })
+    });
+    if (!respuesta.ok) {
+        const cuerpo = await respuesta.text().catch(() => '');
+        throw new Error('WhatsApp respondio ' + respuesta.status + ': ' + cuerpo.slice(0, 500));
+    }
+}
+
+// Cuenta nueva para un numero que nunca escribio: sin contraseña real (nadie
+// la sabe, ni falta que hace -- entra por WhatsApp, no por la web) y con un
+// correo sintetico que nunca se le manda nada (ver el chequeo cuentaWhatsapp
+// en procesarMensajeChat). Mismo esquema que /api/register, para que el
+// resto del sistema (admin, stats, etc.) la trate como cualquier otra cuenta.
+async function crearUsuarioWhatsApp(numero) {
+    const users = db.collection('users');
+    const nuevoId = new ObjectId();
+    const hashed = await bcryptjs.hash(crypto.randomBytes(24).toString('hex'), 10);
+    const nuevoUsuario = {
+        _id: nuevoId,
+        email: 'whatsapp+' + numero + '@lunaticoia.uk',
+        name: 'Cliente de WhatsApp',
+        password: hashed,
+        telefono: numero,
+        cuentaWhatsapp: true,
+        creditBalance: CREDITOS_DE_BIENVENIDA,
+        createdAt: new Date(),
+        emailVerified: true,
+        verificationToken: null,
+        verificationTokenExpira: null,
+        codigoReferido: nuevoId.toString().slice(-8),
+        referidoPor: null,
+        bonoReferidoPagado: false,
+        referidosExitosos: 0,
+        creditosGanadosPorReferidos: 0
+    };
+    await users.insertOne(nuevoUsuario);
+    return nuevoUsuario;
+}
+
+const MINUTOS_VIGENCIA_CODIGO_WHATSAPP = 15;
+
+// Un numero de WhatsApp que ya tiene su propia cuenta (auto-creada la
+// primera vez que escribio) nunca se vincula a otra: se rechaza en vez de
+// mezclar en silencio dos saldos de creditos distintos.
+async function vincularWhatsApp(numero, codigo) {
+    const users = db.collection('users');
+    const yaExiste = await users.findOne({ telefono: numero });
+    if (yaExiste) {
+        return 'Este WhatsApp ya está vinculado a una cuenta de LunaticoIA. Si necesitas cambiarlo, escríbenos a soporte@lunaticoia.uk.';
+    }
+    const objetivo = await users.findOne({ codigoVinculacionWhatsapp: codigo, codigoVinculacionExpira: { $gt: new Date() } });
+    if (!objetivo) {
+        return 'Ese código no es válido o ya venció. Genera uno nuevo desde "Mi cuenta" en la app.';
+    }
+    await users.updateOne(
+        { _id: objetivo._id },
+        { $set: { telefono: numero }, $unset: { codigoVinculacionWhatsapp: '', codigoVinculacionExpira: '' } }
+    );
+    return '¡Listo! Este WhatsApp ya quedó vinculado a tu cuenta de LunaticoIA (' + objetivo.email + '). Comparten el mismo saldo de créditos.';
+}
+
+// El chat de WhatsApp de una persona es, por dentro, un "chat" mas de los
+// que ya existen en la web (ver mas arriba, tipo:'chat') -- asi si alguna
+// vez entra a la app, lo ve ahi mismo en su lista, con su titulo puesto
+// solo. Un solo chat activo por numero (guardado en chatWhatsappActualId);
+// "nuevo" lo suelta para que el siguiente mensaje arranque otro.
+async function obtenerChatWhatsApp(user) {
+    const proyectos = db.collection('proyectos');
+    if (user.chatWhatsappActualId) {
+        const existente = await proyectos.findOne({ _id: user.chatWhatsappActualId });
+        if (existente) return existente;
+    }
+    const createdAt = new Date();
+    const r = await proyectos.insertOne({ userId: user._id, nombre: 'Nuevo chat', tipo: 'chat', createdAt, ultimaActividad: createdAt });
+    await db.collection('users').updateOne({ _id: user._id }, { $set: { chatWhatsappActualId: r.insertedId } });
+    return { _id: r.insertedId, userId: user._id, nombre: 'Nuevo chat', tipo: 'chat', createdAt, ultimaActividad: createdAt };
+}
+
+async function manejarMensajeWhatsApp(req, numero, textoOriginal) {
+    const texto = String(textoOriginal || '').trim();
+    const users = db.collection('users');
+
+    const comandoVincular = texto.match(/^vincular\s+(\d{4,8})$/i);
+    if (comandoVincular) {
+        const respuesta = await vincularWhatsApp(numero, comandoVincular[1]);
+        await enviarMensajeWhatsApp(numero, respuesta);
+        return;
+    }
+
+    let user = await users.findOne({ telefono: numero });
+    if (!user) user = await crearUsuarioWhatsApp(numero);
+
+    if (/^nuevo$/i.test(texto)) {
+        await users.updateOne({ _id: user._id }, { $unset: { chatWhatsappActualId: '' } });
+        await enviarMensajeWhatsApp(numero, 'Listo, empezamos un chat nuevo. ¿En qué te ayudo?');
+        return;
+    }
+    if (/^saldo$/i.test(texto)) {
+        const saldoTexto = user.creditosIlimitados
+            ? 'Tienes créditos ilimitados.'
+            : 'Te quedan ' + Math.round(user.creditBalance) + ' créditos.';
+        await enviarMensajeWhatsApp(numero, saldoTexto);
+        return;
+    }
+    if (!texto) return;
+
+    if (!user.creditosIlimitados && user.creditBalance <= 0) {
+        await enviarMensajeWhatsApp(numero, 'Se te acabaron los créditos. Compra más en lunaticoia.uk (créditos que no caducan) -- si ya tienes cuenta ahí, vincúlala escribiendo "vincular" + el código que te dé la app, para compartir el mismo saldo.');
+        return;
+    }
+
+    const proyectoActual = await obtenerChatWhatsApp(user);
+    let respuestaFinal;
+    try {
+        const resultado = await procesarMensajeChat({
+            req, userId: user._id, user, proyectoId: proyectoActual._id, proyectoActual,
+            mensajeTexto: texto, contenidoUsuario: texto, claveModelo: MODELO_POR_DEFECTO
+        });
+        respuestaFinal = resultado.aiMessage;
+        if (resultado.preguntar) {
+            respuestaFinal += (respuestaFinal ? '\n\n' : '') + '*' + resultado.preguntar.pregunta + '*\n' +
+                resultado.preguntar.opciones.map((o, i) => (i + 1) + '. ' + o).join('\n') +
+                '\n\n(Responde con el número o escribe tu opción.)';
+        }
+    } catch (error) {
+        console.error('✗ whatsapp (procesarMensajeChat):', (error && error.message) || error);
+        respuestaFinal = 'No pude generar la respuesta por un problema técnico. No se te descontó ningún crédito -- intenta de nuevo en un momento.';
+    }
+    await enviarMensajeWhatsApp(numero, respuestaFinal);
+}
+
+// Meta llama a esta ruta UNA vez, al configurar el webhook, para confirmar
+// que el servidor de verdad es dueño de esta URL.
+app.get('/api/whatsapp-webhook', (req, res) => {
+    const modo = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+    if (modo === 'subscribe' && token && process.env.WHATSAPP_VERIFY_TOKEN && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+        return res.status(200).send(challenge);
+    }
+    res.sendStatus(403);
+});
+
+// Meta manda aca cada mensaje entrante (y tambien avisos de "entregado"/
+// "leido" que no traen ningun mensaje adentro -- se ignoran). Se responde
+// 200 de una, antes de procesar nada: si el servidor tarda o Meta no ve un
+// 200 rapido, reintenta el mismo mensaje, y no queremos contestarlo dos
+// veces por eso.
+app.post('/api/whatsapp-webhook', async (req, res) => {
+    res.sendStatus(200);
+    if (!WHATSAPP_CONFIGURADO) return;
+    try {
+        const entry = req.body && req.body.entry && req.body.entry[0];
+        const cambio = entry && entry.changes && entry.changes[0];
+        const valor = cambio && cambio.value;
+        const mensaje = valor && valor.messages && valor.messages[0];
+        if (!mensaje) return;
+
+        if (mensaje.type !== 'text') {
+            await enviarMensajeWhatsApp(mensaje.from, 'Por ahora solo puedo leer mensajes de texto -- escríbeme tu pregunta en palabras.');
+            return;
+        }
+        await manejarMensajeWhatsApp(req, mensaje.from, mensaje.text && mensaje.text.body);
+    } catch (error) {
+        console.error('✗ whatsapp-webhook:', (error && error.message) || error);
+    }
+});
+
+// Desde "Mi cuenta": genera un codigo de 6 digitos para vincular un WhatsApp
+// a ESTA cuenta (la que ya tiene sesion abierta en la web), en vez de que
+// ese numero se cree una cuenta nueva la primera vez que escriba.
+app.post('/api/vincular-whatsapp', authenticateToken, async (req, res) => {
+    try {
+        if (!WHATSAPP_CONFIGURADO) return res.status(503).json({ error: 'WhatsApp no está configurado todavía' });
+        const users = db.collection('users');
+        const userId = new ObjectId(req.user.userId);
+        const user = await users.findOne({ _id: userId });
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        if (user.telefono) {
+            return res.json({ yaVinculado: true, telefono: user.telefono });
+        }
+        const codigo = String(Math.floor(100000 + Math.random() * 900000));
+        await users.updateOne(
+            { _id: userId },
+            { $set: { codigoVinculacionWhatsapp: codigo, codigoVinculacionExpira: new Date(Date.now() + MINUTOS_VIGENCIA_CODIGO_WHATSAPP * 60 * 1000) } }
+        );
+        res.json({ codigo, minutos: MINUTOS_VIGENCIA_CODIGO_WHATSAPP });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos generar el código.', error, 'vincular-whatsapp');
     }
 });
 

@@ -3622,6 +3622,18 @@
           'href="https://wa.me/573142233472?text=' + encodeURIComponent('Hola, tengo una pregunta sobre mi cuenta de LunaticoIA (' + yo.email + ')') + '" ' +
           'target="_blank" rel="noopener">💬 Escríbenos por WhatsApp</a>' +
       '</div>' +
+      (yo.whatsappConfigurado ? (
+        '<div class="bloque">' +
+          '<h3>Chatea por WhatsApp</h3>' +
+          (yo.telefono ? (
+            '<p class="nota">Tu cuenta ya está vinculada al WhatsApp ' + esc(yo.telefono) + '. Comparte el mismo saldo de créditos que aquí.</p>'
+          ) : (
+            '<p class="nota">Vincula tu WhatsApp a esta cuenta para chatear con la IA directo desde ahí, con el mismo saldo de créditos que en la app.</p>' +
+            '<button class="btn btn-borde" style="width:100%" onclick="generarCodigoWhatsApp()">Generar código para vincular</button>' +
+            '<div id="codigoWhatsApp"></div>'
+          )) +
+        '</div>'
+      ) : '') +
       (yo.creditosIlimitados ? '<button class="btn btn-borde" style="width:100%; margin-bottom:12px" onclick="abrirPanel(\'admin\')">Panel de admin</button>' : '') +
       '<button class="btn btn-borde" style="width:100%" onclick="salir()">Cerrar sesión</button>';
   }
@@ -3688,6 +3700,27 @@
       if (caja) caja.value = '';
       aviso.style.color = 'var(--ok)';
       aviso.textContent = 'Vaciada.';
+    });
+  };
+
+  window.generarCodigoWhatsApp = function () {
+    var cont = $('codigoWhatsApp');
+    if (cont) cont.innerHTML = '<p class="nota" style="margin-top:10px">Generando…</p>';
+    api('/api/vincular-whatsapp', { method: 'POST' }).then(function (r) {
+      if (!cont) return;
+      if (!r.res.ok) {
+        cont.innerHTML = '<p class="nota" style="margin-top:10px;color:var(--error)">' + esc((r.data && r.data.error) || 'No se pudo generar.') + '</p>';
+        return;
+      }
+      if (r.data.yaVinculado) {
+        cont.innerHTML = '<p class="nota" style="margin-top:10px">Ya tienes un WhatsApp vinculado: ' + esc(r.data.telefono) + '</p>';
+        return;
+      }
+      cont.innerHTML =
+        '<div class="bloque-preguntar" style="margin-top:10px">' +
+          '<p class="preguntar-texto">Tu código: ' + esc(r.data.codigo) + '</p>' +
+          '<p class="nota">Escríbele a nuestro WhatsApp: <b>vincular ' + esc(r.data.codigo) + '</b><br>Vence en ' + r.data.minutos + ' minutos.</p>' +
+        '</div>';
     });
   };
 
