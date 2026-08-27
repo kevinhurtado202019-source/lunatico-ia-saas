@@ -463,7 +463,14 @@
   header.barra {
     flex: none;
     display: flex; align-items: center; gap: 14px;
-    padding: 0 18px; height: 60px;
+    padding: 0 18px;
+    /* En iPhone, el status-bar-style "black-translucent" del manifest deja
+       que la pagina dibuje por debajo de la hora/wifi/bateria del telefono
+       -- sin este padding, la barra de LunaticoIA quedaba montada encima de
+       eso en vez de debajo. env() no hace nada (queda en 0) en equipos sin
+       notch/isla dinamica, asi que no afecta a nadie mas. */
+    padding-top: env(safe-area-inset-top);
+    height: calc(60px + env(safe-area-inset-top));
     border-bottom: 1px solid var(--borde-suave);
     background: rgba(11,14,23,.82);
     backdrop-filter: blur(12px);
@@ -676,7 +683,7 @@
 
   /* --------- redactor --------- */
 
-  .pie { flex: none; padding: 10px 20px 18px; }
+  .pie { flex: none; padding: 10px 20px calc(18px + env(safe-area-inset-bottom)); }
   .redactor { max-width: 720px; margin: 0 auto; }
 
   .caja {
@@ -979,8 +986,8 @@
 
   @media (max-width: 620px) {
     .centro { padding: 22px 16px 8px; }
-    .pie { padding: 8px 12px 14px; }
-    header.barra { padding: 0 12px; gap: 10px; }
+    .pie { padding: 8px 12px calc(14px + env(safe-area-inset-bottom)); }
+    header.barra { padding: 0 12px; padding-top: env(safe-area-inset-top); gap: 10px; }
     .saldo span { display: none; }
   }
 </style>
