@@ -12,6 +12,7 @@ const bcryptjs = require('bcryptjs');
 const Anthropic = require('@anthropic-ai/sdk');
 const { MongoClient, ObjectId } = require('mongodb');
 const https = require('https');
+const zlib = require('zlib');
 
 // Fail fast si falta configuración crítica
 const REQUIRED_ENV = ['MONGODB_URI', 'JWT_SECRET', 'CLAUDE_API_KEY'];
@@ -787,6 +788,66 @@ async function enviarCorreo(destinatario, asunto, textoPlano, html) {
     } catch (error) {
         console.error('✗ Error enviando correo:', error.message);
         return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Respaldo automatico de la base de datos
+//
+// Sin infraestructura nueva ni cuenta de terceros: mientras el servidor
+// siga corriendo (lo normal en Railway), manda un volcado comprimido de
+// toda la base por correo al dueno (la cuenta con creditosIlimitados),
+// usando el mismo Resend que ya esta configurado para verificacion/reset.
+//
+// OJO -- esto asume que la base cabe comoda en un adjunto de correo. El dia
+// que la cantidad de usuarios/mensajes crezca mucho, hay que cambiar esto
+// por un respaldo de verdad (a un bucket S3 o similar): RESPALDO_MAX_BYTES
+// evita mandar algo gigante, pero solo avisa por log si se paso, no
+// resuelve el problema de fondo.
+// ---------------------------------------------------------------------------
+
+const RESPALDO_INTERVALO_MS = 24 * 60 * 60 * 1000;
+const RESPALDO_MAX_BYTES = 20 * 1024 * 1024;
+const COLECCIONES_A_RESPALDAR = ['users', 'messages', 'proyectos', 'compras', 'compartidos', 'resumenes', 'paginas'];
+
+async function enviarRespaldoBaseDatos() {
+    if (!CORREO_CONFIGURADO) return;
+    try {
+        const dueno = await db.collection('users').findOne({ creditosIlimitados: true });
+        if (!dueno || !dueno.email) {
+            console.warn('⚠ Respaldo: no se encontró una cuenta de dueño (creditosIlimitados) para mandárselo');
+            return;
+        }
+
+        const respaldo = {};
+        for (const nombre of COLECCIONES_A_RESPALDAR) {
+            respaldo[nombre] = await db.collection(nombre).find({}).toArray();
+        }
+        // Contraseñas y tokens nunca viajan por correo, ni hasheadas -- el
+        // respaldo es para poder restaurar datos, no necesita eso.
+        respaldo.users = respaldo.users.map((u) => {
+            const { password, verificationToken, resetToken, ...resto } = u;
+            return resto;
+        });
+
+        const comprimido = zlib.gzipSync(JSON.stringify(respaldo));
+        if (comprimido.length > RESPALDO_MAX_BYTES) {
+            console.error('✗ Respaldo: la base ya pesa demasiado para mandarla por correo (' +
+                Math.round(comprimido.length / 1024 / 1024) + ' MB comprimida) -- hace falta otro método, ver comentario arriba.');
+            return;
+        }
+
+        const fecha = new Date().toISOString().slice(0, 10);
+        await llamarResendAPI({
+            from: CORREO_REMITENTE,
+            to: dueno.email,
+            subject: `Respaldo de LunaticoIA - ${fecha}`,
+            text: `Respaldo automático de la base de datos, ${fecha}. Archivo adjunto comprimido (.json.gz).`,
+            attachments: [{ filename: `lunaticoia-respaldo-${fecha}.json.gz`, content: comprimido.toString('base64') }]
+        });
+        console.log(`✓ Respaldo de base de datos enviado por correo (${Math.round(comprimido.length / 1024)} KB)`);
+    } catch (error) {
+        console.error('✗ Error generando/enviando el respaldo:', error.message);
     }
 }
 
@@ -2190,5 +2251,8 @@ connectDatabase().then(() => {
         console.log(`✓ Modelo por defecto: ${MODELOS[MODELO_POR_DEFECTO].id}`);
         console.log(`✓ Wompi: ${WOMPI_CONFIGURADO ? 'Configurado' : 'SIN CONFIGURAR (compras deshabilitadas)'}`);
         console.log(`✓ Correo: ${CORREO_CONFIGURADO ? 'Configurado' : 'SIN CONFIGURAR (verificación y recuperación de contraseña deshabilitadas)'}`);
+        console.log(`✓ Respaldo automático: ${CORREO_CONFIGURADO ? 'activado (cada 24h por correo)' : 'apagado (sin correo configurado)'}`);
+        enviarRespaldoBaseDatos();
+        setInterval(enviarRespaldoBaseDatos, RESPALDO_INTERVALO_MS);
     });
 });
