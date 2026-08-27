@@ -903,6 +903,10 @@
   .panel-cabeza {
     flex: none; display: flex; align-items: center; gap: 12px;
     padding: 16px 18px; border-bottom: 1px solid var(--borde-suave);
+    /* Mismo ajuste que header.barra: sin esto el titulo del panel queda
+       montado debajo de la hora/bateria en celulares con isla dinamica o
+       notch, porque .panel es position:fixed y arranca en top:0. */
+    padding-top: calc(16px + env(safe-area-inset-top));
   }
   .panel-cabeza h2 {
     font-family: var(--display); font-weight: 600; font-size: 20px;
