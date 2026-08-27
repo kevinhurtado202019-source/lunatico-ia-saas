@@ -2393,13 +2393,25 @@
     rs: 'rs'
   };
 
+  // Sin el mime correcto, iOS no reconoce el archivo (nombre repetido tipo
+  // "algo.html.txt", ofrece abrirlo en apps random como CamScanner en vez
+  // de dejarlo guardar bien) porque todo salia como text/plain generico sin
+  // importar el lenguaje real.
+  var MIME_POR_EXTENSION = {
+    html: 'text/html', xml: 'application/xml', css: 'text/css',
+    json: 'application/json', js: 'text/javascript', jsx: 'text/javascript',
+    ts: 'text/plain', tsx: 'text/plain', md: 'text/markdown', csv: 'text/csv',
+    yml: 'text/yaml', sql: 'text/plain', sh: 'text/x-sh'
+  };
+
   window.descargarCodigo = function (boton) {
     var caja = boton.closest('.bloque-codigo');
     var code = caja && caja.querySelector('pre code');
     if (!code) return;
     var texto = code.textContent || '';
     var ext = boton.getAttribute('data-ext') || 'txt';
-    var blob = new Blob([texto], { type: 'text/plain;charset=utf-8' });
+    var mime = MIME_POR_EXTENSION[ext] || 'text/plain';
+    var blob = new Blob([texto], { type: mime + ';charset=utf-8' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
