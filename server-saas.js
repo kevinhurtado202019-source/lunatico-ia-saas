@@ -165,12 +165,25 @@ const MENSAJES_POR_HISTORIAL_VISUAL = 50;
 // (lo del sandbox de code_execution) siempre se respetan. Si el chat es
 // dentro de un proyecto con SUS PROPIAS instrucciones, esas mandan en vez de
 // las generales de la cuenta -- mas especifico gana.
-function construirSystemPrompt(user, proyecto) {
+function construirSystemPrompt(user, proyecto, resumen) {
+    let prompt = SYSTEM_PROMPT_BASE;
+
+    // El resumen cubre lo que quedo fuera de la ventana de MENSAJES_DE_HISTORIAL
+    // (ver actualizarResumenSiHaceFalta) -- sin esto, la conversacion "olvida"
+    // todo lo de mas de 30 mensajes atras, como si nunca se hubiera dicho.
+    if (resumen) {
+        prompt += '\n\n' +
+            'Resumen de lo hablado antes en esta conversacion (mensajes mas ' +
+            'viejos que ya no se repiten completos en el historial visible, ' +
+            'pero la persona puede seguir dando por hecho que te acordas): \n' +
+            resumen;
+    }
+
     const instruccionesProyecto = proyecto && typeof proyecto.instrucciones === 'string' ? proyecto.instrucciones.trim() : '';
     const instrucciones = instruccionesProyecto ||
         (user && typeof user.instrucciones === 'string' ? user.instrucciones.trim() : '');
-    if (!instrucciones) return SYSTEM_PROMPT_BASE;
-    return SYSTEM_PROMPT_BASE + '\n\n' +
+    if (!instrucciones) return prompt;
+    return prompt + '\n\n' +
         'Instrucciones personalizadas de la persona que te escribe (sobre ' +
         'como prefiere que le hables, tono, idioma, formato, etc. -- ' +
         'siguelas salvo que choquen con las reglas de arriba):\n' +
@@ -443,6 +456,84 @@ const MAX_TOKENS_RESPUESTA = 16384;
 // aguanta charlas mas largas sin perder contexto; el costo en tokens lo paga
 // cada quien via creditos, asi que subirlo no le cuesta nada a la cuenta.
 const MENSAJES_DE_HISTORIAL = 30;
+
+// ---------------------------------------------------------------------------
+// Memoria mas alla de MENSAJES_DE_HISTORIAL
+//
+// Subir el numero de mensajes visibles de golpe sale caro (cada mensaje
+// vuelve a mandar TODO el historial a la API, asi que mas historial = mas
+// tokens de entrada en cada turno, para siempre). En vez de eso, los
+// mensajes que van quedando fuera de la ventana visible se resumen en un
+// solo parrafo con Rapido (barato) y ese resumen -- no los mensajes
+// completos -- se le pega al system prompt. Asi la conversacion "recuerda"
+// sin que el costo por mensaje crezca sin limite.
+//
+// Se dispara en segundo plano DESPUES de responder (fire-and-forget, no
+// retrasa la respuesta al usuario) y solo cuando ya se junto un buen bloque
+// de mensajes viejos sin resumir -- no en cada mensaje, para no gastar de
+// mas en llamadas de resumen.
+// ---------------------------------------------------------------------------
+
+const UMBRAL_MENSAJES_PARA_RESUMIR = 20;
+const MAX_CARACTERES_RESUMEN = 2500;
+
+async function actualizarResumenSiHaceFalta(db, userId, proyectoId) {
+    try {
+        const messages = db.collection('messages');
+        const resumenes = db.collection('resumenes');
+        const filtro = { userId, proyectoId };
+
+        const recientes = await messages.find(filtro)
+            .sort({ createdAt: -1, _id: -1 })
+            .limit(MENSAJES_DE_HISTORIAL)
+            .toArray();
+        // Todavia no se lleno la ventana visible: no hay nada mas viejo que
+        // se este quedando afuera, asi que no hay nada que resumir.
+        if (recientes.length < MENSAJES_DE_HISTORIAL) return;
+
+        const resumenActual = await resumenes.findOne(filtro);
+        const corteVisible = recientes[recientes.length - 1].createdAt;
+        const desde = (resumenActual && resumenActual.resumidoHasta) || new Date(0);
+
+        const pendientes = await messages.find({
+            ...filtro,
+            createdAt: { $lt: corteVisible, $gt: desde }
+        }).sort({ createdAt: 1 }).toArray();
+
+        if (pendientes.length < UMBRAL_MENSAJES_PARA_RESUMIR) return;
+
+        const textoPendientes = pendientes.map((m) => {
+            const contenido = typeof m.content === 'string' ? m.content : '[mensaje con adjunto]';
+            return (m.role === 'user' ? 'Persona: ' : 'LunaticoIA: ') + contenido.slice(0, 600);
+        }).join('\n\n');
+
+        const promptResumen = (resumenActual && resumenActual.resumen ? 'Resumen de lo anterior:\n' + resumenActual.resumen + '\n\n' : '') +
+            'Fragmento nuevo de la conversacion a incorporar:\n' + textoPendientes + '\n\n' +
+            'Actualiza el resumen de arriba (o crea uno si no habia) en un solo ' +
+            'parrafo conciso, en tercera persona, de maximo ' + MAX_CARACTERES_RESUMEN +
+            ' caracteres. Guarda datos concretos que sirvan para conversaciones ' +
+            'futuras: nombres, preferencias, decisiones tomadas, proyectos o temas ' +
+            'en curso. No inventes nada que no este en el texto de arriba.';
+
+        const respuesta = await claudeClient.messages.create({
+            model: MODELOS.rapido.id,
+            max_tokens: 700,
+            messages: [{ role: 'user', content: promptResumen }]
+        });
+        const nuevoResumen = (respuesta.content.find((b) => b.type === 'text') || {}).text || '';
+        if (!nuevoResumen.trim()) return;
+
+        await resumenes.updateOne(filtro, {
+            $set: {
+                resumen: nuevoResumen.trim().slice(0, MAX_CARACTERES_RESUMEN),
+                resumidoHasta: pendientes[pendientes.length - 1].createdAt,
+                actualizadoEn: new Date()
+            }
+        }, { upsert: true });
+    } catch (error) {
+        console.error('✗ actualizarResumen:', (error && error.message) || error);
+    }
+}
 
 const PAQUETES = {
     prueba:  { creditos: 400,   precioCOP: 9900,   nombre: 'Prueba'  },
@@ -846,6 +937,7 @@ async function connectDatabase() {
         const compras = db.collection('compras');
         const proyectos = db.collection('proyectos');
         const compartidos = db.collection('compartidos');
+        const resumenes = db.collection('resumenes');
 
         await users.createIndex({ email: 1 }, { unique: true });
         await users.createIndex({ verificationToken: 1 }, { sparse: true });
@@ -855,6 +947,7 @@ async function connectDatabase() {
         await compras.createIndex({ referencia: 1 }, { unique: true });
         await proyectos.createIndex({ userId: 1, createdAt: -1 });
         await compartidos.createIndex({ codigo: 1 }, { unique: true });
+        await resumenes.createIndex({ userId: 1, proyectoId: 1 }, { unique: true });
 
         console.log('✓ MongoDB connected successfully');
     } catch (error) {
@@ -1492,6 +1585,8 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             });
         }
 
+        const resumenDoc = await db.collection('resumenes').findOne({ userId, proyectoId });
+
         const history = await messages
             .find({ userId, proyectoId })
             .sort({ createdAt: -1, _id: -1 })
@@ -1580,12 +1675,13 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
         const urlsImagenValidas = new Set();
         const usoAcumulado = { input_tokens: 0, output_tokens: 0, server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 } };
         const MAX_RONDAS_TOTAL = MAX_RONDAS_BUSCAR_IMAGEN + 1;
+        const systemPrompt = construirSystemPrompt(user, proyectoActual, resumenDoc && resumenDoc.resumen);
 
         for (let ronda = 1; ronda <= MAX_RONDAS_TOTAL; ronda++) {
             const stream = claudeClient.messages.stream({
                 model: modelo.id,
                 max_tokens: MAX_TOKENS_RESPUESTA,
-                system: construirSystemPrompt(user, proyectoActual),
+                system: systemPrompt,
                 messages: mensajesRonda,
                 tools: HERRAMIENTAS_PARA_CHAT
             });
@@ -1732,6 +1828,11 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             }
         }) + '\n\n');
         res.end();
+
+        // En segundo plano, sin retrasar ni afectar la respuesta ya enviada:
+        // si se junto suficiente historial viejo, lo resume para que la
+        // memoria le alcance mas alla de MENSAJES_DE_HISTORIAL.
+        actualizarResumenSiHaceFalta(db, userId, proyectoId);
     } catch (error) {
         if (res.headersSent) {
             // Ya se le mando texto real al cliente (el SSE esta abierto): no se
