@@ -628,13 +628,18 @@
   .turno.ia .texto .acciones-codigo {
     position: absolute; top: 8px; right: 8px; z-index: 1; display: flex; gap: 6px;
   }
-  .turno.ia .texto .copiar-codigo, .turno.ia .texto .descargar-codigo {
+  .turno.ia .texto .copiar-codigo, .turno.ia .texto .descargar-codigo, .turno.ia .texto .vista-previa-codigo {
     background: var(--noche); color: var(--tenue); border: 1px solid var(--borde-suave);
     border-radius: 6px; padding: 4px 10px; font-size: .75em; font-family: var(--ui);
     cursor: pointer; transition: color .15s, border-color .15s;
   }
-  .turno.ia .texto .copiar-codigo:hover, .turno.ia .texto .descargar-codigo:hover { color: var(--texto); border-color: var(--luna); }
+  .turno.ia .texto .copiar-codigo:hover, .turno.ia .texto .descargar-codigo:hover,
+  .turno.ia .texto .vista-previa-codigo:hover { color: var(--texto); border-color: var(--luna); }
   .turno.ia .texto .copiar-codigo.copiado { color: var(--luna); border-color: var(--luna); }
+  .turno.ia .texto .vista-previa-frame {
+    display: block; width: 100%; height: 380px; margin-top: 8px;
+    background: #fff; border: 1px solid var(--borde-suave); border-radius: 10px;
+  }
   .turno.ia .texto h1, .turno.ia .texto h2, .turno.ia .texto h3 {
     font-family: var(--display); font-weight: 700; line-height: 1.3; margin: .9em 0 .4em;
   }
@@ -2405,6 +2410,29 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   };
 
+  // Renderiza el HTML que escribio la IA en un <iframe> aislado, ahi mismo
+  // en el chat, para verlo funcionando de verdad en vez de solo leer el
+  // codigo. sandbox SIN "allow-same-origin": el iframe corre en un origen
+  // vacio propio, sin acceso a las cookies/sesion de LunaticoIA ni a nada
+  // de la pagina real, aunque el HTML traiga su propio <script>.
+  window.alternarVistaPrevia = function (boton) {
+    var caja = boton.closest('.bloque-codigo');
+    var previa = caja && caja.querySelector('.vista-previa-frame');
+    if (previa) {
+      previa.remove();
+      boton.textContent = 'Vista previa';
+      return;
+    }
+    var code = caja && caja.querySelector('pre code');
+    if (!code) return;
+    var iframe = document.createElement('iframe');
+    iframe.className = 'vista-previa-frame';
+    iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-popups');
+    iframe.srcdoc = code.textContent || '';
+    caja.appendChild(iframe);
+    boton.textContent = 'Ocultar vista previa';
+  };
+
   // Markdown minimo (parrafos, **negrita**, *cursiva*, `codigo`, ```bloques```,
   // listas y # encabezados) para que las respuestas se vean como las de un
   // chat serio y no como texto plano. Todo se escapa antes de formatear, asi
@@ -2416,10 +2444,12 @@
     var bloques = [];
     bruto = bruto.replace(/```([a-zA-Z0-9]*)\n?([\s\S]*?)```/g, function (m, lenguaje, codigo) {
       var idx = bloques.length;
+      var esHtml = (lenguaje || '').toLowerCase() === 'html' || (lenguaje || '').toLowerCase() === 'htm';
       var ext = EXTENSION_POR_LENGUAJE[(lenguaje || '').toLowerCase()] || 'txt';
       bloques.push(
         '<div class="bloque-codigo">' +
           '<div class="acciones-codigo">' +
+            (esHtml ? '<button type="button" class="vista-previa-codigo" onclick="alternarVistaPrevia(this)" aria-label="Ver la pagina renderizada">Vista previa</button>' : '') +
             '<button type="button" class="descargar-codigo" onclick="descargarCodigo(this)" data-ext="' + esc(ext) + '" aria-label="Descargar código">Descargar</button>' +
             '<button type="button" class="copiar-codigo" onclick="copiarCodigo(this)" aria-label="Copiar código">Copiar</button>' +
           '</div>' +
