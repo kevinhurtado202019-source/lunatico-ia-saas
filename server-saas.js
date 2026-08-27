@@ -2026,12 +2026,41 @@ const PAGINA_NO_DISPONIBLE = '<!doctype html><meta charset="utf-8"><title>Lunati
     '<body style="font-family:sans-serif;text-align:center;padding:60px 20px;color:#666">' +
     'Esta página ya no está disponible.</body>';
 
+// Manifest + service worker minimos para que PWABuilder (pwabuilder.com)
+// reconozca la pagina publicada como una PWA valida y pueda empacarla en un
+// APK -- sin esto, PWABuilder simplemente no la detecta como instalable.
+// El script de registro es SIEMPRE el mismo texto exacto para cualquier
+// pagina (usa location.pathname en vez de traer el codigo escrito adentro),
+// asi se puede permitir con un hash de CSP en vez de abrir script-src del
+// todo -- el resto del HTML generado por la IA sigue sin poder correr
+// ningun script propio.
+const SW_REGISTRO_SCRIPT = "if('serviceWorker' in navigator){navigator.serviceWorker.register(location.pathname.replace(/\\/$/,'')+'/sw.js').catch(function(){});}";
+const SW_REGISTRO_HASH = 'sha256-' + crypto.createHash('sha256').update(SW_REGISTRO_SCRIPT, 'utf8').digest('base64');
+
+function extraerTituloPagina(html) {
+    const m = /<title[^>]*>([^<]*)<\/title>/i.exec(html || '');
+    return m ? m[1].trim().slice(0, 45) : null;
+}
+
+// Mete el <link rel="manifest"> y el <script> de registro al principio del
+// <head> del HTML generado (o al principio del documento si no trae head
+// propio) -- no toca nada mas del contenido.
+function inyectarPwa(html, codigo) {
+    const extra = `<link rel="manifest" href="/paginas/${codigo}/manifest.json">` +
+        `<script>${SW_REGISTRO_SCRIPT}</script>`;
+    if (/<head[^>]*>/i.test(html)) {
+        return html.replace(/<head[^>]*>/i, (etiqueta) => etiqueta + extra);
+    }
+    return extra + html;
+}
+
 app.get('/paginas/:codigo', async (req, res) => {
-    // Bloquea scripts del todo (ver explicacion arriba) pero deja cargar
-    // imagenes/fuentes de cualquier lado -- sin esto, COEP (que Helmet
-    // activa por defecto para el resto del sitio) bloqueaba imagenes
-    // externas que la pagina generada quisiera mostrar.
-    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'none'; style-src 'unsafe-inline' https: data:; img-src * data: blob:; font-src * data:; media-src * data: blob:;");
+    // Bloquea scripts del todo, salvo el UNICO script de registro del
+    // service worker (permitido por su hash exacto, ver arriba) -- deja
+    // cargar imagenes/fuentes de cualquier lado, y el manifest propio.
+    res.setHeader('Content-Security-Policy',
+        `default-src 'none'; script-src '${SW_REGISTRO_HASH}'; style-src 'unsafe-inline' https: data:; ` +
+        `img-src * data: blob:; font-src * data:; media-src * data: blob:; manifest-src 'self'; worker-src 'self';`);
     res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -2039,11 +2068,43 @@ app.get('/paginas/:codigo', async (req, res) => {
         const paginas = db.collection('paginas');
         const doc = await paginas.findOne({ codigo: req.params.codigo });
         if (!doc) return res.status(404).type('html').send(PAGINA_NO_DISPONIBLE);
-        res.type('html').send(doc.html);
+        res.type('html').send(inyectarPwa(doc.html, req.params.codigo));
     } catch (error) {
         console.error('✗ paginas/:codigo:', (error && error.message) || error);
         res.status(500).type('html').send(PAGINA_NO_DISPONIBLE);
     }
+});
+
+app.get('/paginas/:codigo/manifest.json', async (req, res) => {
+    try {
+        const paginas = db.collection('paginas');
+        const doc = await paginas.findOne({ codigo: req.params.codigo });
+        if (!doc) return res.status(404).json({ error: 'No disponible' });
+        const nombre = extraerTituloPagina(doc.html) || 'Página de LunaticoIA';
+        res.json({
+            name: nombre,
+            short_name: nombre.slice(0, 30),
+            start_url: `/paginas/${req.params.codigo}`,
+            scope: `/paginas/${req.params.codigo}`,
+            display: 'standalone',
+            background_color: '#0B0E17',
+            theme_color: '#0B0E17',
+            icons: [
+                { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+                { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+                { src: '/icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+            ]
+        });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos generar el manifest.', error, 'paginas-manifest');
+    }
+});
+
+app.get('/paginas/:codigo/sw.js', (req, res) => {
+    // Lo minimo que PWABuilder exige para contar la pagina como instalable:
+    // un service worker registrado con un listener de "fetch" -- no hace
+    // falta que cachee nada de verdad.
+    res.type('application/javascript').send("self.addEventListener('fetch', function () {});");
 });
 
 // ---------------------------------------------------------------------------

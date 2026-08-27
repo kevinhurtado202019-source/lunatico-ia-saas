@@ -27,7 +27,7 @@ Actualizado: 26 de agosto de 2026 (última actualización: memoria más larga, f
 - Se pueden adjuntar **imágenes, PDF, Word (.docx), Excel (.xlsx) y .zip** (del .zip solo se leen los archivos de texto/código de adentro).
 - Los adjuntos se recuerdan dentro de la misma conversación (no solo en el mensaje en que se mandan).
 - Botones para **copiar** o **descargar** el código y las respuestas completas, y para **compartir una respuesta puntual por link público** (sin que quien lo vea necesite cuenta).
-- Cuando la IA escribe una página web (bloque de código HTML): botón **"Vista previa"** para verla renderizada ahí mismo en el chat, y botón **"Publicar página"** para conseguir un link real, abrible en cualquier navegador (por seguridad, esas páginas publicadas no pueden correr JavaScript propio).
+- Cuando la IA escribe una página web (bloque de código HTML): botón **"Vista previa"** para verla renderizada ahí mismo en el chat, botón **"Publicar página"** para conseguir un link real, abrible en cualquier navegador (por seguridad, esas páginas publicadas no pueden correr JavaScript propio), y botón **"Convertir en app (APK)"** que manda a PWABuilder (gratis, de Microsoft) con esa página ya lista para empacar como app instalable de Android.
 
 ### Organización de conversaciones
 - **Proyectos**: agrupar conversaciones con nombre, cada uno con su propio historial e instrucciones propias.

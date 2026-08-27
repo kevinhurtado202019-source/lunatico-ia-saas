@@ -629,13 +629,15 @@
     position: absolute; top: 8px; right: 8px; z-index: 1; display: flex; gap: 6px;
   }
   .turno.ia .texto .copiar-codigo, .turno.ia .texto .descargar-codigo,
-  .turno.ia .texto .vista-previa-codigo, .turno.ia .texto .publicar-codigo {
+  .turno.ia .texto .vista-previa-codigo, .turno.ia .texto .publicar-codigo,
+  .turno.ia .texto .apk-codigo {
     background: var(--noche); color: var(--tenue); border: 1px solid var(--borde-suave);
     border-radius: 6px; padding: 4px 10px; font-size: .75em; font-family: var(--ui);
     cursor: pointer; transition: color .15s, border-color .15s;
   }
   .turno.ia .texto .copiar-codigo:hover, .turno.ia .texto .descargar-codigo:hover,
-  .turno.ia .texto .vista-previa-codigo:hover, .turno.ia .texto .publicar-codigo:hover { color: var(--texto); border-color: var(--luna); }
+  .turno.ia .texto .vista-previa-codigo:hover, .turno.ia .texto .publicar-codigo:hover,
+  .turno.ia .texto .apk-codigo:hover { color: var(--texto); border-color: var(--luna); }
   .turno.ia .texto .copiar-codigo.copiado { color: var(--luna); border-color: var(--luna); }
   .turno.ia .texto .vista-previa-frame {
     display: block; width: 100%; height: 380px; margin-top: 8px;
@@ -2468,6 +2470,22 @@
         return;
       }
       var link = r.data.link;
+      // PWABuilder (pwabuilder.com, gratis, de Microsoft) sabe convertir
+      // cualquier pagina web en un APK instalable -- la pagina publicada ya
+      // trae el manifest.json y el service worker que necesita para
+      // reconocerla (ver /paginas/:codigo en el servidor), asi que solo
+      // hace falta mandar a la persona ahi con el link ya puesto.
+      var accionesCaja = caja.querySelector('.acciones-codigo');
+      if (accionesCaja && !accionesCaja.querySelector('.apk-codigo')) {
+        var botonApk = document.createElement('button');
+        botonApk.type = 'button';
+        botonApk.className = 'apk-codigo';
+        botonApk.textContent = 'Convertir en app (APK)';
+        botonApk.onclick = function () {
+          window.open('https://www.pwabuilder.com/reportcard?site=' + encodeURIComponent(link), '_blank', 'noopener');
+        };
+        accionesCaja.appendChild(botonApk);
+      }
       function marcarCopiado() {
         boton.textContent = '¡Copiado!';
         setTimeout(function () { boton.textContent = textoOriginal; }, 1600);
