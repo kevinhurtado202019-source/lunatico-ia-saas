@@ -139,7 +139,7 @@
 
   .lp-nav {
     display: flex; align-items: center; gap: 14px;
-    padding: 20px 0 0;
+    padding: calc(20px + env(safe-area-inset-top)) 0 0;
   }
   .lp-nav .marca { font-size: 20px; }
   .lp-nav .marca svg { color: var(--luna); }
