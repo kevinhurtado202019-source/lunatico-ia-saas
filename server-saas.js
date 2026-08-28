@@ -510,11 +510,14 @@ const EXTENSION_POR_MEDIA_TYPE_ADJUNTO = {
 // primero se pide una URL firmada donde subir, despues se sube el archivo ahi.
 async function subirImagenAFal(base64Data, mediaType) {
     const extension = EXTENSION_POR_MEDIA_TYPE_ADJUNTO[mediaType] || 'jpg';
-    const iniciar = await fetch(
-        'https://rest.alpha.fal.ai/storage/upload/initiate?content_type=' + encodeURIComponent(mediaType) +
-            '&file_name=' + encodeURIComponent('adjunto.' + extension),
-        { method: 'POST', headers: { Authorization: 'Key ' + process.env.FAL_API_KEY } }
-    );
+    // La API de fal.ai espera content_type/file_name en el CUERPO (JSON), no
+    // como parametros de la URL -- probado en produccion el 27 de agosto:
+    // mandarlos en la query string da 422 "Field required" (esperaba un body).
+    const iniciar = await fetch('https://rest.alpha.fal.ai/storage/upload/initiate', {
+        method: 'POST',
+        headers: { Authorization: 'Key ' + process.env.FAL_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content_type: mediaType, file_name: 'adjunto.' + extension })
+    });
     if (!iniciar.ok) {
         const cuerpoError = await iniciar.text().catch(() => '');
         throw new Error('fal.ai (iniciar subida) respondio ' + iniciar.status + ': ' + cuerpoError.slice(0, 500));
