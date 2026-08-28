@@ -612,63 +612,89 @@ const HERRAMIENTA_PROBAR_PRENDA = {
         'texto y no copia el diseño exacto de una prenda). Usala SOLO cuando la persona adjunto DOS ' +
         'imagenes en este mismo mensaje -- la persona y la prenda -- y pide algo como "ponle esta ' +
         'ropa", "pruebate esta camiseta", "como me veria con esto puesto". Si la prenda solo esta ' +
-        'descrita en palabras (sin una foto real de ella), usa editar_imagen en su lugar.',
+        'descrita en palabras (sin una foto real de ella), usa editar_imagen en su lugar. Puede ' +
+        'tardar uno o dos minutos en responder -- es normal, avisale a la persona que espere.',
     input_schema: {
         type: 'object',
         properties: {
             categoria: {
                 type: 'string',
-                enum: ['upper_body', 'lower_body', 'dresses'],
-                description: 'Tipo de prenda: upper_body (camiseta/camisa/chaqueta/top), ' +
-                    'lower_body (pantalon/falda/short), o dresses (vestido/enterizo).'
-            },
-            descripcion: {
-                type: 'string',
-                description: 'Descripcion corta de la prenda en la foto de referencia (color, tipo, ' +
-                    'estampado), en ingles para mejor calidad -- ej: "yellow and green striped soccer jersey".'
+                enum: ['tops', 'bottoms', 'one-pieces', 'auto'],
+                description: 'Tipo de prenda: tops (camiseta/camisa/chaqueta), bottoms ' +
+                    '(pantalon/falda/short), one-pieces (vestido/enterizo), o auto si no estas ' +
+                    'seguro (la herramienta detecta el tipo sola). Default: auto.'
             }
-        },
-        required: ['categoria', 'descripcion']
+        }
     }
 };
 
-async function probarPrendaFal(personaUrl, prendaUrl, categoria, descripcion) {
-    const controlador = new AbortController();
-    // IDM-VTON es bastante mas lento que los modelos Flux (buscar/generar/
-    // editar) -- probado en produccion el 27 de agosto: con 60s de margen
-    // se cancelaba a la mitad ("This operation was aborted"), y con 120s
-    // tambien (tardo 124,7s de punta a punta). Se deja bastante margen.
-    const tiempoAgotado = setTimeout(() => controlador.abort(), 180000);
-    try {
-        const respuesta = await fetch('https://fal.run/fal-ai/idm-vton', {
-            method: 'POST',
-            headers: { Authorization: 'Key ' + process.env.FAL_API_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                human_image_url: personaUrl, garment_image_url: prendaUrl,
-                category: ['upper_body', 'lower_body', 'dresses'].includes(categoria) ? categoria : 'upper_body',
-                description: String(descripcion || 'a garment').slice(0, 500)
-            }),
-            signal: controlador.signal
-        });
-        if (!respuesta.ok) {
-            const cuerpoError = await respuesta.text().catch(() => '');
-            throw new Error('fal.ai respondio ' + respuesta.status + ': ' + cuerpoError.slice(0, 500));
-        }
-        const datos = await respuesta.json();
-        // IDM-VTON devuelve un solo "image" (no un array "images" como los
-        // modelos Flux) -- se revisan las dos formas por si acaso.
-        const url = (datos.image && datos.image.url) || (datos.images && datos.images[0] && datos.images[0].url);
-        if (!url) throw new Error('fal.ai no devolvio ninguna imagen de la prueba de ropa');
-        console.log('probar_prenda: ' + url);
-        return url;
-    } finally {
-        clearTimeout(tiempoAgotado);
-    }
-}
+// Precio real de fal.ai para fashn/tryon v1.6 (modo balanced): ~$0,04 por
+// prueba -> 40 creditos al tipo de cambio de Rapido, mismo criterio de
+// siempre.
+const CREDITOS_POR_PROBAR_PRENDA = 40;
 
-// Precio real de fal.ai para idm-vton: ~$0,05 por prueba -> 50 creditos al
-// tipo de cambio de Rapido, mismo criterio de siempre.
-const CREDITOS_POR_PROBAR_PRENDA = 50;
+const FASHN_TRYON_APP_ID = 'fal-ai/fashn/tryon/v1.6';
+const FASHN_POLL_INTERVALO_MS = 3000;
+const FASHN_POLL_MAX_MS = 4 * 60 * 1000;
+
+// A diferencia de flux/schnell y flux-pro/kontext (que responden en unos
+// segundos y sí sirven para una llamada bloqueante simple), un probador de
+// ropa como este puede tardar bastante y con tiempos muy variables --
+// probado en produccion el 27 de agosto con OTRO modelo (idm-vton): una
+// llamada bloqueante se cancelaba justo al filo sin importar cuanto margen
+// se le diera (120s, 180s, incluso 300s), y probado directo contra la API
+// de fal.ai por fuera de este servidor, el propio fal.ai tardo 5 minutos y
+// devolvio un error interno igual. La documentacion de fal.ai es clara en
+// que para este tipo de modelo hay que usar la Cola (Queue API) en vez de
+// una llamada bloqueante -- se manda el pedido, y se pregunta cada pocos
+// segundos si ya esta listo, en vez de mantener una sola conexion abierta
+// esperando.
+async function probarPrendaFal(personaUrl, prendaUrl, categoria) {
+    const cabeceras = { Authorization: 'Key ' + process.env.FAL_API_KEY, 'Content-Type': 'application/json' };
+
+    const envio = await fetch('https://queue.fal.run/' + FASHN_TRYON_APP_ID, {
+        method: 'POST',
+        headers: cabeceras,
+        body: JSON.stringify({
+            model_image: personaUrl, garment_image: prendaUrl,
+            category: ['tops', 'bottoms', 'one-pieces', 'auto'].includes(categoria) ? categoria : 'auto'
+        })
+    });
+    if (!envio.ok) {
+        const cuerpoError = await envio.text().catch(() => '');
+        throw new Error('fal.ai (encolar) respondio ' + envio.status + ': ' + cuerpoError.slice(0, 500));
+    }
+    const { request_id: requestId } = await envio.json();
+    if (!requestId) throw new Error('fal.ai no devolvio un request_id para la cola.');
+
+    const urlEstado = 'https://queue.fal.run/' + FASHN_TRYON_APP_ID + '/requests/' + requestId + '/status';
+    const desde = Date.now();
+    while (Date.now() - desde < FASHN_POLL_MAX_MS) {
+        await new Promise((r) => setTimeout(r, FASHN_POLL_INTERVALO_MS));
+        const estado = await fetch(urlEstado, { headers: cabeceras });
+        if (!estado.ok) continue; // un fallo puntual de red al preguntar no tumba el intento entero
+        const datosEstado = await estado.json();
+        if (datosEstado.status === 'COMPLETED') break;
+        if (datosEstado.status === 'ERROR') {
+            throw new Error('fal.ai devolvio error procesando la prueba de ropa.');
+        }
+        if (Date.now() - desde >= FASHN_POLL_MAX_MS) {
+            throw new Error('fal.ai tardo demasiado en procesar la prueba de ropa (mas de 4 minutos).');
+        }
+    }
+
+    const urlResultado = 'https://queue.fal.run/' + FASHN_TRYON_APP_ID + '/requests/' + requestId;
+    const resultado = await fetch(urlResultado, { headers: cabeceras });
+    if (!resultado.ok) {
+        const cuerpoError = await resultado.text().catch(() => '');
+        throw new Error('fal.ai (resultado) respondio ' + resultado.status + ': ' + cuerpoError.slice(0, 500));
+    }
+    const datos = await resultado.json();
+    const url = datos.images && datos.images[0] && datos.images[0].url;
+    if (!url) throw new Error('fal.ai no devolvio ninguna imagen de la prueba de ropa');
+    console.log('probar_prenda: ' + url);
+    return url;
+}
 
 // Lista final que se le manda a Claude: las de siempre + buscar_imagen,
 // generar_imagen, editar_imagen y probar_prenda, cada una solo si esta
@@ -2316,8 +2342,7 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
         mensajesRonda = mensajesRonda.concat([{ role: 'assistant', content: contenidoRonda }]);
         const resultadosTool = await Promise.all(llamadasImagen.map(async (llamada) => {
             if (llamada.name === 'probar_prenda') {
-                const categoria = (llamada.input && llamada.input.categoria) || 'upper_body';
-                const descripcionPrenda = (llamada.input && llamada.input.descripcion) || '';
+                const categoria = (llamada.input && llamada.input.categoria) || 'auto';
                 const bloquesImagen = Array.isArray(contenidoUsuario)
                     ? contenidoUsuario.filter((b) => b.type === 'image' && b.source && b.source.type === 'base64')
                     : [];
@@ -2334,7 +2359,7 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
                         subirImagenAFal(bloquesImagen[0].source.data, bloquesImagen[0].source.media_type),
                         subirImagenAFal(bloquesImagen[1].source.data, bloquesImagen[1].source.media_type)
                     ]);
-                    const urlResultado = await probarPrendaFal(personaUrl, prendaUrl, categoria, descripcionPrenda);
+                    const urlResultado = await probarPrendaFal(personaUrl, prendaUrl, categoria);
                     urlsImagenValidas.add(urlResultado);
                     return { type: 'tool_result', tool_use_id: llamada.id, content: 'Imagen con la prenda probada: ' + urlResultado };
                 } catch (errorPrenda) {
