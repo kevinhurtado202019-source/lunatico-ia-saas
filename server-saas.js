@@ -621,13 +621,18 @@ const HERRAMIENTA_PROBAR_PRENDA = {
                 enum: ['upper_body', 'lower_body', 'dresses'],
                 description: 'Tipo de prenda: upper_body (camiseta/camisa/chaqueta/top), ' +
                     'lower_body (pantalon/falda/short), o dresses (vestido/enterizo).'
+            },
+            descripcion: {
+                type: 'string',
+                description: 'Descripcion corta de la prenda en la foto de referencia (color, tipo, ' +
+                    'estampado), en ingles para mejor calidad -- ej: "yellow and green striped soccer jersey".'
             }
         },
-        required: ['categoria']
+        required: ['categoria', 'descripcion']
     }
 };
 
-async function probarPrendaFal(personaUrl, prendaUrl, categoria) {
+async function probarPrendaFal(personaUrl, prendaUrl, categoria, descripcion) {
     const controlador = new AbortController();
     // IDM-VTON es bastante mas lento que los modelos Flux (buscar/generar/
     // editar) -- probado en produccion el 27 de agosto: con 60s de margen
@@ -640,7 +645,8 @@ async function probarPrendaFal(personaUrl, prendaUrl, categoria) {
             headers: { Authorization: 'Key ' + process.env.FAL_API_KEY, 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 human_image_url: personaUrl, garment_image_url: prendaUrl,
-                category: ['upper_body', 'lower_body', 'dresses'].includes(categoria) ? categoria : 'upper_body'
+                category: ['upper_body', 'lower_body', 'dresses'].includes(categoria) ? categoria : 'upper_body',
+                description: String(descripcion || 'a garment').slice(0, 500)
             }),
             signal: controlador.signal
         });
@@ -2311,6 +2317,7 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
         const resultadosTool = await Promise.all(llamadasImagen.map(async (llamada) => {
             if (llamada.name === 'probar_prenda') {
                 const categoria = (llamada.input && llamada.input.categoria) || 'upper_body';
+                const descripcionPrenda = (llamada.input && llamada.input.descripcion) || '';
                 const bloquesImagen = Array.isArray(contenidoUsuario)
                     ? contenidoUsuario.filter((b) => b.type === 'image' && b.source && b.source.type === 'base64')
                     : [];
@@ -2327,7 +2334,7 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
                         subirImagenAFal(bloquesImagen[0].source.data, bloquesImagen[0].source.media_type),
                         subirImagenAFal(bloquesImagen[1].source.data, bloquesImagen[1].source.media_type)
                     ]);
-                    const urlResultado = await probarPrendaFal(personaUrl, prendaUrl, categoria);
+                    const urlResultado = await probarPrendaFal(personaUrl, prendaUrl, categoria, descripcionPrenda);
                     urlsImagenValidas.add(urlResultado);
                     return { type: 'tool_result', tool_use_id: llamada.id, content: 'Imagen con la prenda probada: ' + urlResultado };
                 } catch (errorPrenda) {
