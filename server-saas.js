@@ -2117,6 +2117,23 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
         .toArray();
     const esPrimerMensajeDelChat = history.length === 0;
 
+    // Todas las URLs de imagen que de verdad aparecieron antes en este chat
+    // (generadas, buscadas, o pegadas por la persona) -- se usa para
+    // verificar el imagen_url que el modelo le pasa a editar_imagen, en vez
+    // de confiarle ciegamente esa URL: probado en produccion el 27 de agosto
+    // que el modelo a veces inventa una URL con la misma pinta ("placeholder.jpg"
+    // en vez de copiar la real), y fal.ai simplemente falla al no poder
+    // descargarla.
+    const urlsImagenHistorial = new Set();
+    history.forEach((m) => {
+        if (typeof m.content !== 'string') return;
+        const regex = new RegExp(REGEX_IMAGEN_MARKDOWN.source, 'gm');
+        let coincidencia;
+        while ((coincidencia = regex.exec(m.content))) {
+            urlsImagenHistorial.add(coincidencia[2]);
+        }
+    });
+
     let messagesForClaude = history
         .reverse()
         .map((m) => ({ role: m.role, content: m.content }));
@@ -2188,9 +2205,29 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
         mensajesRonda = mensajesRonda.concat([{ role: 'assistant', content: contenidoRonda }]);
         const resultadosTool = await Promise.all(llamadasImagen.map(async (llamada) => {
             if (llamada.name === 'editar_imagen') {
-                imagenesEditadas++;
                 const instruccion = (llamada.input && llamada.input.instruccion) || '';
                 let imagenUrlEntrada = (llamada.input && llamada.input.imagen_url) || '';
+
+                // Nunca confiar ciegamente en la URL que manda el modelo: si
+                // dice ser de una imagen "ya existente" en la conversacion,
+                // tiene que aparecer de verdad ahi -- si no, es inventada
+                // (ver el comentario junto a urlsImagenHistorial, mas arriba).
+                // Se valida ANTES de contar el intento (imagenesEditadas++,
+                // mas abajo) para no cobrarle a la persona por un intento
+                // que ni siquiera llego a pedirle nada a fal.ai -- si el
+                // modelo corrige la URL y reintenta en la misma ronda, ese
+                // reintento se cobra una sola vez, no dos.
+                if (imagenUrlEntrada && !urlsImagenHistorial.has(imagenUrlEntrada) && !urlsImagenValidas.has(imagenUrlEntrada)) {
+                    return {
+                        type: 'tool_result', tool_use_id: llamada.id, is_error: true,
+                        content: 'Esa URL no es de ninguna imagen real de esta conversacion. Si es una imagen ' +
+                            'que ya aparecio antes, copiala EXACTO del historial, letra por letra -- no la ' +
+                            'inventes ni la acortes. Si en cambio la persona acaba de adjuntar la foto en ' +
+                            'este mismo mensaje, llama a editar_imagen de nuevo pero sin poner nada en imagen_url.'
+                    };
+                }
+
+                imagenesEditadas++;
                 try {
                     if (!imagenUrlEntrada) {
                         const bloqueImagen = Array.isArray(contenidoUsuario) &&
