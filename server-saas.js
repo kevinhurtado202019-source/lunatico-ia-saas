@@ -664,10 +664,16 @@ async function probarPrendaFal(personaUrl, prendaUrl, categoria) {
         const cuerpoError = await envio.text().catch(() => '');
         throw new Error('fal.ai (encolar) respondio ' + envio.status + ': ' + cuerpoError.slice(0, 500));
     }
-    const { request_id: requestId } = await envio.json();
-    if (!requestId) throw new Error('fal.ai no devolvio un request_id para la cola.');
+    const datosEnvio = await envio.json();
+    // OJO: NO se arman a mano con FASHN_TRYON_APP_ID -- fal.ai devuelve las
+    // URLs de seguimiento con un path mas corto que el de la app (probado en
+    // produccion el 27 de agosto: armarlas a mano daba 405 "Method Not
+    // Allowed" al pedir el resultado). Hay que usar tal cual lo que
+    // devuelve la propia respuesta del POST inicial.
+    const urlEstado = datosEnvio.status_url;
+    const urlResultado = datosEnvio.response_url;
+    if (!urlEstado || !urlResultado) throw new Error('fal.ai no devolvio las URLs de seguimiento de la cola.');
 
-    const urlEstado = 'https://queue.fal.run/' + FASHN_TRYON_APP_ID + '/requests/' + requestId + '/status';
     const desde = Date.now();
     while (Date.now() - desde < FASHN_POLL_MAX_MS) {
         await new Promise((r) => setTimeout(r, FASHN_POLL_INTERVALO_MS));
@@ -678,12 +684,8 @@ async function probarPrendaFal(personaUrl, prendaUrl, categoria) {
         if (datosEstado.status === 'ERROR') {
             throw new Error('fal.ai devolvio error procesando la prueba de ropa.');
         }
-        if (Date.now() - desde >= FASHN_POLL_MAX_MS) {
-            throw new Error('fal.ai tardo demasiado en procesar la prueba de ropa (mas de 4 minutos).');
-        }
     }
 
-    const urlResultado = 'https://queue.fal.run/' + FASHN_TRYON_APP_ID + '/requests/' + requestId;
     const resultado = await fetch(urlResultado, { headers: cabeceras });
     if (!resultado.ok) {
         const cuerpoError = await resultado.text().catch(() => '');
