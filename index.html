@@ -1742,6 +1742,7 @@
   var proyectos = [];
   var proyectoActual = null; // null = chat general; si no, { id, nombre }
   var adminUsuarios = [];
+  var tareas = [];
   var enviando = false;
   var hayMensajes = false;
   var tokenReset = null;
@@ -3055,7 +3056,7 @@
                 ' · ' + c.tokensEntrada + ' entrada / ' + c.tokensSalida + ' salida';
               if (c.busquedas) texto += ' · ' + c.busquedas + ' búsqueda' + (c.busquedas > 1 ? 's' : '') + ' web';
               if (c.lecturasWeb) texto += ' · ' + c.lecturasWeb + ' página' + (c.lecturasWeb > 1 ? 's' : '') + ' leída' + (c.lecturasWeb > 1 ? 's' : '');
-              if (c.imagenes) texto += ' · ' + c.imagenes + ' imagen' + (c.imagenes > 1 ? 'es' : '') + ' buscada' + (c.imagenes > 1 ? 's' : '');
+              if (c.imagenes) texto += ' · ' + c.imagenes + ' imagen' + (c.imagenes > 1 ? 'es' : '');
               linea.textContent = texto;
               esperando.caja.appendChild(linea);
               if (yo) {
@@ -3127,7 +3128,7 @@
     });
   }
 
-  var titulosPanel = { paquetes: 'Paquetes de créditos', proyectos: 'Chats', admin: 'Panel de admin', buscar: 'Buscar en tus conversaciones' };
+  var titulosPanel = { paquetes: 'Paquetes de créditos', proyectos: 'Chats', admin: 'Panel de admin', buscar: 'Buscar en tus conversaciones', tareas: 'Tareas programadas' };
 
   window.abrirPanel = function (vista) {
     abridor = document.activeElement;
@@ -3137,6 +3138,7 @@
       vista === 'proyectos' ? vistaProyectos() :
       vista === 'admin' ? vistaAdmin() :
       vista === 'buscar' ? vistaBuscar() :
+      vista === 'tareas' ? vistaTareas() :
       vistaCuenta();
     fondoInerte(true);
     $('panel').classList.add('abierto');
@@ -3154,6 +3156,13 @@
       cargarAdmin().then(function () {
         if ($('panel').classList.contains('abierto') && $('tituloPanel').textContent === titulosPanel.admin) {
           $('cuerpoPanel').innerHTML = vistaAdmin();
+        }
+      });
+    }
+    if (vista === 'tareas') {
+      cargarTareas().then(function () {
+        if ($('panel').classList.contains('abierto') && $('tituloPanel').textContent === titulosPanel.tareas) {
+          $('cuerpoPanel').innerHTML = vistaTareas();
         }
       });
     }
@@ -3498,6 +3507,143 @@
       ) : '');
   }
 
+  // ---------------- tareas programadas ----------------
+
+  var DIAS_SEMANA = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  var confirmarBorradoTarea = null; // id de la tarea en modo "¿seguro?"
+
+  function cargarTareas() {
+    return api('/api/tareas').then(function (r) {
+      if (r.res.ok && r.data) tareas = r.data.tareas || [];
+    });
+  }
+
+  function etiquetaFrecuenciaTarea(t) {
+    if (t.frecuencia === 'una_vez') return 'Una vez, a las ' + t.horaLocal;
+    if (t.frecuencia === 'diaria') return 'Todos los días a las ' + t.horaLocal;
+    return 'Cada ' + (DIAS_SEMANA[t.diaSemana] || '') + ' a las ' + t.horaLocal;
+  }
+
+  window.actualizarFrecuenciaTarea = function () {
+    var sel = $('frecuenciaTarea');
+    var envoltorio = $('envoltorioDiaTarea');
+    if (sel && envoltorio) envoltorio.style.display = sel.value === 'semanal' ? '' : 'none';
+  };
+
+  window.crearTareaProgramada = function () {
+    var titulo = ($('tituloTarea') || {}).value || '';
+    var instruccion = ($('instruccionTarea') || {}).value || '';
+    var frecuencia = ($('frecuenciaTarea') || {}).value || '';
+    var horaLocal = ($('horaTarea') || {}).value || '';
+    var diaSemana = ($('diaSemanaTarea') || {}).value;
+    var aviso = $('avisoTarea');
+
+    if (!titulo.trim() || !instruccion.trim() || !horaLocal) {
+      if (aviso) { aviso.style.color = 'var(--error)'; aviso.textContent = 'Completa el título, la instrucción y la hora.'; }
+      return;
+    }
+    if (aviso) { aviso.style.color = 'var(--tenue)'; aviso.textContent = 'Creando…'; }
+
+    var cuerpo = { titulo: titulo.trim(), instruccion: instruccion.trim(), frecuencia: frecuencia, horaLocal: horaLocal };
+    if (frecuencia === 'semanal') cuerpo.diaSemana = parseInt(diaSemana, 10);
+
+    api('/api/tareas', { method: 'POST', body: JSON.stringify(cuerpo) }).then(function (r) {
+      if (!r.res.ok) {
+        if (aviso) { aviso.style.color = 'var(--error)'; aviso.textContent = (r.data && r.data.error) || 'No se pudo crear la tarea.'; }
+        return;
+      }
+      cargarTareas().then(function () {
+        if ($('panel').classList.contains('abierto') && $('tituloPanel').textContent === titulosPanel.tareas) {
+          $('cuerpoPanel').innerHTML = vistaTareas();
+        }
+      });
+    });
+  };
+
+  window.alternarTarea = function (id, activa) {
+    api('/api/tareas/' + id, { method: 'PATCH', body: JSON.stringify({ activa: activa }) }).then(function (r) {
+      if (!r.res.ok) return;
+      cargarTareas().then(function () { $('cuerpoPanel').innerHTML = vistaTareas(); });
+    });
+  };
+
+  window.pedirBorrarTarea = function (id) {
+    confirmarBorradoTarea = id;
+    $('cuerpoPanel').innerHTML = vistaTareas();
+  };
+
+  window.cancelarBorrarTarea = function () {
+    confirmarBorradoTarea = null;
+    $('cuerpoPanel').innerHTML = vistaTareas();
+  };
+
+  window.eliminarTarea = function (id) {
+    api('/api/tareas/' + id, { method: 'DELETE' }).then(function (r) {
+      confirmarBorradoTarea = null;
+      if (!r.res.ok) { $('cuerpoPanel').innerHTML = vistaTareas(); return; }
+      tareas = tareas.filter(function (t) { return t.id !== id; });
+      $('cuerpoPanel').innerHTML = vistaTareas();
+    });
+  };
+
+  function vistaTareas() {
+    if (!yo || !yo.correoConfigurado) {
+      return '<div class="bloque"><p class="nota">Las tareas programadas todavía no están disponibles.</p></div>';
+    }
+
+    var filas = tareas.map(function (t) {
+      var estado = !t.activa
+        ? '<b>Pausada</b>'
+        : '<b>' + esc(new Date(t.proximaEjecucion).toLocaleString('es-CO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })) + '</b>';
+
+      var pie = confirmarBorradoTarea === t.id
+        ? '' +
+          '<div class="proyecto-fila confirmando" style="margin-top:10px">' +
+            '<span class="proyecto-nombre">¿Borrar esta tarea?</span>' +
+            '<button type="button" class="btn-mini" onclick="eliminarTarea(\'' + t.id + '\')">Sí</button>' +
+            '<button type="button" class="btn-mini" onclick="cancelarBorrarTarea()">No</button>' +
+          '</div>'
+        : '' +
+          '<div style="display:flex;gap:8px;margin-top:10px">' +
+            '<button type="button" class="btn btn-borde" style="flex:1" onclick="alternarTarea(\'' + t.id + '\', ' + (!t.activa) + ')">' + (t.activa ? 'Pausar' : 'Reactivar') + '</button>' +
+            '<button type="button" class="btn btn-borde" style="flex:1;color:var(--error);border-color:var(--error)" onclick="pedirBorrarTarea(\'' + t.id + '\')">Borrar</button>' +
+          '</div>';
+
+      return '' +
+        '<div class="bloque tarjeta-usuario">' +
+          '<div class="dato"><span>' + esc(t.titulo) + '</span>' + estado + '</div>' +
+          '<p class="nota" style="margin-top:6px">' + esc(t.instruccion) + '</p>' +
+          '<p class="nota" style="margin-top:6px">' + esc(etiquetaFrecuenciaTarea(t)) + '</p>' +
+          pie +
+        '</div>';
+    }).join('');
+
+    return '' +
+      '<div class="bloque">' +
+        '<h3>Nueva tarea</h3>' +
+        '<input type="text" id="tituloTarea" placeholder="Título (ej: Clima de Neiva)" maxlength="80" style="width:100%;margin-bottom:8px;background:var(--noche);color:var(--texto);border:1px solid var(--borde-suave);border-radius:10px;padding:10px 13px;font-family:var(--ui);font-size:14px">' +
+        '<textarea id="instruccionTarea" class="campo-instrucciones" maxlength="1000" placeholder="Qué quieres que haga o revise (ej: dime el pronóstico del clima en Neiva para hoy)"></textarea>' +
+        '<div style="display:flex;gap:8px;margin-top:8px">' +
+          '<select id="frecuenciaTarea" onchange="actualizarFrecuenciaTarea()" style="flex:1;background:var(--noche);color:var(--texto);border:1px solid var(--borde-suave);border-radius:10px;padding:10px 13px;font-family:var(--ui);font-size:14px">' +
+            '<option value="una_vez">Una vez</option>' +
+            '<option value="diaria">Todos los días</option>' +
+            '<option value="semanal">Cada semana</option>' +
+          '</select>' +
+          '<input type="time" id="horaTarea" value="08:00" style="background:var(--noche);color:var(--texto);border:1px solid var(--borde-suave);border-radius:10px;padding:10px 13px;font-family:var(--ui);font-size:14px">' +
+        '</div>' +
+        '<div id="envoltorioDiaTarea" style="display:none;margin-top:8px">' +
+          '<select id="diaSemanaTarea" style="width:100%;background:var(--noche);color:var(--texto);border:1px solid var(--borde-suave);border-radius:10px;padding:10px 13px;font-family:var(--ui);font-size:14px">' +
+            DIAS_SEMANA.map(function (d, i) { return '<option value="' + i + '">' + d.charAt(0).toUpperCase() + d.slice(1) + '</option>'; }).join('') +
+          '</select>' +
+        '</div>' +
+        '<button type="button" class="btn btn-borde" style="width:100%;margin-top:8px" onclick="crearTareaProgramada()">+ Crear tarea</button>' +
+        '<p class="nota-guardado" id="avisoTarea"></p>' +
+      '</div>' +
+      (tareas.length
+        ? '<div class="bloque"><h3>Tus tareas</h3></div>' + filas
+        : '<div class="bloque"><p class="nota">Todavía no tienes ninguna tarea programada.</p></div>');
+  }
+
   function cargarAdmin() {
     return api('/api/admin/usuarios').then(function (r) {
       if (r.res.ok && r.data) adminUsuarios = r.data.usuarios || [];
@@ -3615,6 +3761,11 @@
         '<button class="btn btn-borde" style="width:100%" onclick="guardarMemoriaCuenta()">Guardar cambios</button>' +
         '<button class="btn btn-borde" style="width:100%;margin-top:8px;color:var(--error);border-color:var(--error)" onclick="borrarMemoriaCuenta()">Vaciar memoria</button>' +
         '<p class="nota-guardado" id="avisoMemoriaCuenta"></p>' +
+      '</div>' +
+      '<div class="bloque">' +
+        '<h3>Tareas programadas</h3>' +
+        '<p class="nota">Deja una instrucción con hora y frecuencia -- una vez, todos los días o cada semana -- y LunaticoIA la corre sola y te avisa el resultado por correo.</p>' +
+        '<button class="btn btn-borde" style="width:100%" onclick="abrirPanel(\'tareas\')">🗓️ Ver mis tareas</button>' +
       '</div>' +
       '<div class="bloque">' +
         '<h3>Ayuda</h3>' +

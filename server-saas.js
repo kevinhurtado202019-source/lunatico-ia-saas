@@ -57,6 +57,10 @@ const PESO_SALIDA = 5;
 // herramienta, ni el system prompt le dice que la use) en vez de romperse.
 const IMAGEN_CONFIGURADA = Boolean(process.env.SERPER_API_KEY);
 
+// Igual criterio: sin FAL_API_KEY, generar_imagen ni se ofrece como
+// herramienta (ver generarImagenFal, mas abajo, junto a buscar_imagen).
+const IMAGEN_GENERACION_CONFIGURADA = Boolean(process.env.FAL_API_KEY);
+
 // Sin esto el modelo confunde su sandbox de code_execution con el computador
 // de quien le escribe: llega a decir "ya lo exporté a tus Descargas" cuando
 // eso es imposible (el sandbox no tiene ningun acceso al dispositivo de la
@@ -174,6 +178,19 @@ const SYSTEM_PROMPT_BASE = [
         'nunca reuses ni copies el patron de una URL que aparecio antes en ' +
         'el historial, aunque sea real -- cada pedido de foto es una ' +
         'busqueda nueva.'
+] : []).concat(IMAGEN_GENERACION_CONFIGURADA ? [
+    '',
+    'Si te piden una imagen de algo INVENTADO o artistico -- una ' +
+        'ilustracion, un personaje, un logo, un dibujo, una escena que no ' +
+        'existe en la realidad, "una imagen de un dragon montando ' +
+        'bicicleta", etc. -- usa la herramienta generar_imagen en vez de ' +
+        'buscar_imagen (esa es solo para fotos reales que ya existen). ' +
+        'Describi la imagen en la herramienta con el mayor detalle posible ' +
+        '(estilo, colores, composicion), en ingles para mejor calidad. Ponla ' +
+        'en tu respuesta igual que una foto real: en su propia linea, con ' +
+        'sintaxis de imagen en markdown ![descripcion](URL-que-te-devolvio-' +
+        'la-herramienta). Nunca inventes una URL de imagen generada por tu ' +
+        'cuenta.'
 ] : []).join('\n');
 
 const MAX_CARACTERES_INSTRUCCIONES = 600;
@@ -360,10 +377,76 @@ async function buscarImagenSerper(consulta) {
 const CREDITOS_POR_IMAGEN = 3;
 const MAX_RONDAS_BUSCAR_IMAGEN = 3;
 
-// Lista final que se le manda a Claude: las de siempre + buscar_imagen, solo
-// si esta configurada (si no, ni se ofrece -- asi el modelo no puede
-// "elegirla" y quedarse pegado esperando que exista).
-const HERRAMIENTAS_PARA_CHAT = HERRAMIENTAS_IA.concat(IMAGEN_CONFIGURADA ? [HERRAMIENTA_BUSCAR_IMAGEN] : []);
+// ---------------------------------------------------------------------------
+// Generar imagenes con IA (fal.ai, modelo Flux)
+//
+// A diferencia de buscar_imagen (que busca fotos que YA existen), esta crea
+// una imagen nueva desde cero a partir de una descripcion -- para pedidos de
+// algo inventado o artistico. Misma mecanica de herramienta "de cliente" que
+// buscar_imagen: el ciclo de rondas en procesarMensajeChat llama a esta
+// funcion, mete la URL resultante de vuelta en la conversacion y le pide a
+// Claude que siga.
+//
+// Se eligio fal.ai (modelo flux/schnell) por precio y velocidad: genera en
+// 1-2 segundos, a diferencia de otros proveedores que tardan 10-20s, y
+// devuelve directo una URL publica (alojada por fal.ai) lista para usar en
+// markdown -- no hay que subir ni alojar nada del lado de este servidor.
+// ---------------------------------------------------------------------------
+
+const HERRAMIENTA_GENERAR_IMAGEN = {
+    name: 'generar_imagen',
+    description: 'Genera una imagen nueva con IA a partir de una descripcion -- para algo ' +
+        'inventado, artistico o que no existe en el mundo real (una ilustracion, un ' +
+        'personaje, un logo, una escena imaginaria, etc.). Para fotos de algo real que si ' +
+        'existe, usa buscar_imagen en vez de esta.',
+    input_schema: {
+        type: 'object',
+        properties: {
+            descripcion: {
+                type: 'string',
+                description: 'Descripcion detallada de la imagen a generar (estilo, colores, ' +
+                    'composicion), en ingles para mejor calidad.'
+            }
+        },
+        required: ['descripcion']
+    }
+};
+
+async function generarImagenFal(descripcion) {
+    const controlador = new AbortController();
+    const tiempoAgotado = setTimeout(() => controlador.abort(), 30000);
+    try {
+        const respuesta = await fetch('https://fal.run/fal-ai/flux/schnell', {
+            method: 'POST',
+            headers: { Authorization: 'Key ' + process.env.FAL_API_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: String(descripcion || '').slice(0, 2000), image_size: 'square_hd', num_images: 1 }),
+            signal: controlador.signal
+        });
+        if (!respuesta.ok) {
+            const cuerpoError = await respuesta.text().catch(() => '');
+            throw new Error('fal.ai respondio ' + respuesta.status + ': ' + cuerpoError.slice(0, 500));
+        }
+        const datos = await respuesta.json();
+        const url = datos.images && datos.images[0] && datos.images[0].url;
+        if (!url) throw new Error('fal.ai no devolvio ninguna imagen');
+        console.log('generar_imagen "' + descripcion.slice(0, 80) + '": ' + url);
+        return url;
+    } finally {
+        clearTimeout(tiempoAgotado);
+    }
+}
+
+// Precio real de fal.ai para flux/schnell: ~$0,003 por imagen (1 megapixel)
+// -> 3 creditos al tipo de cambio de Rapido, mismo criterio de siempre (se
+// cobra al costo, sin margen aparte).
+const CREDITOS_POR_GENERAR_IMAGEN = 3;
+
+// Lista final que se le manda a Claude: las de siempre + buscar_imagen y
+// generar_imagen, cada una solo si esta configurada (si no, ni se ofrece --
+// asi el modelo no puede "elegirla" y quedarse pegado esperando que exista).
+const HERRAMIENTAS_PARA_CHAT = HERRAMIENTAS_IA
+    .concat(IMAGEN_CONFIGURADA ? [HERRAMIENTA_BUSCAR_IMAGEN] : [])
+    .concat(IMAGEN_GENERACION_CONFIGURADA ? [HERRAMIENTA_GENERAR_IMAGEN] : []);
 
 // Imagenes adjuntas al chat (para que el usuario muestre capturas, disenos o
 // mockups de su proyecto). Van directo en el mensaje como bloque "image", sin
@@ -1943,7 +2026,8 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
     let mensajesRonda = messagesForClaude;
     let aiMessage = '';
     let response = null;
-    let imagenesLlamadas = 0;
+    let imagenesBuscadas = 0;
+    let imagenesGeneradas = 0;
     const urlsImagenValidas = new Set();
     const usoAcumulado = { input_tokens: 0, output_tokens: 0, server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 } };
     const MAX_RONDAS_TOTAL = MAX_RONDAS_BUSCAR_IMAGEN + 1;
@@ -1975,13 +2059,29 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
         usoAcumulado.server_tool_use.web_fetch_requests += (usoRonda.server_tool_use && usoRonda.server_tool_use.web_fetch_requests) || 0;
 
         const contenidoRonda = Array.isArray(response.content) ? response.content : [];
-        const llamadasImagen = contenidoRonda.filter((b) => b.type === 'tool_use' && b.name === 'buscar_imagen');
+        const llamadasImagen = contenidoRonda.filter((b) => b.type === 'tool_use' &&
+            (b.name === 'buscar_imagen' || b.name === 'generar_imagen'));
         if (!llamadasImagen.length) break;
         if (ronda === MAX_RONDAS_TOTAL) break;
 
         mensajesRonda = mensajesRonda.concat([{ role: 'assistant', content: contenidoRonda }]);
         const resultadosTool = await Promise.all(llamadasImagen.map(async (llamada) => {
-            imagenesLlamadas++;
+            if (llamada.name === 'generar_imagen') {
+                imagenesGeneradas++;
+                const descripcion = (llamada.input && llamada.input.descripcion) || '';
+                try {
+                    const url = await generarImagenFal(descripcion);
+                    urlsImagenValidas.add(url);
+                    return { type: 'tool_result', tool_use_id: llamada.id, content: 'Imagen generada: ' + url };
+                } catch (errorGeneracion) {
+                    console.error('✗ generar_imagen:', (errorGeneracion && errorGeneracion.message) || errorGeneracion);
+                    return {
+                        type: 'tool_result', tool_use_id: llamada.id, is_error: true,
+                        content: 'La generacion de imagen fallo por un problema tecnico. Avisale a la persona que no se pudo generar la imagen ahora mismo.'
+                    };
+                }
+            }
+            imagenesBuscadas++;
             const consulta = (llamada.input && llamada.input.consulta) || '';
             try {
                 const resultados = await buscarImagenSerper(consulta);
@@ -2005,7 +2105,9 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
     const teniaContenidoAntes = !!aiMessage.trim();
     aiMessage = quitarImagenesInventadas(aiMessage, urlsImagenValidas);
     if (teniaContenidoAntes && !aiMessage.trim()) {
-        aiMessage = 'No encontré ninguna foto real que sirviera para eso.';
+        aiMessage = imagenesGeneradas > 0
+            ? 'No se pudo generar esa imagen.'
+            : 'No encontré ninguna foto real que sirviera para eso.';
     }
 
     const tieneInstruccionesPropias = !!(
@@ -2029,9 +2131,12 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
             '. Escribe "continúa" para que siga.*';
     }
 
+    const imagenesLlamadas = imagenesBuscadas + imagenesGeneradas;
+
     // Se cobra DESPUES de una respuesta correcta: si la API falla, el
     // usuario no pierde saldo.
-    const cobro = creditosDe(usoAcumulado, modelo.multiplicador) + imagenesLlamadas * CREDITOS_POR_IMAGEN;
+    const cobro = creditosDe(usoAcumulado, modelo.multiplicador) +
+        imagenesBuscadas * CREDITOS_POR_IMAGEN + imagenesGeneradas * CREDITOS_POR_GENERAR_IMAGEN;
     const nuevoSaldo = ilimitado ? user.creditBalance : Math.max(0, user.creditBalance - cobro);
 
     const guardadoEn = new Date();
@@ -2552,6 +2657,225 @@ app.post('/api/vincular-whatsapp', authenticateToken, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Tareas programadas
+//
+// "Revisa esto y avísame" -- la persona deja una instruccion con una hora y
+// una frecuencia, y un lazo en segundo plano (ver ejecutarTareasProgramadas,
+// junto al arranque del servidor) la corre sola cuando toca, reusando
+// EXACTAMENTE procesarMensajeChat (mismo motor, mismos creditos, misma
+// memoria) y avisando el resultado por correo. Cada tarea tiene su propio
+// chat persistente (proyectoId, creado la primera vez que corre) para que
+// si la persona entra a la app lo vea ahi, con historial de cada corrida.
+//
+// Colombia no tiene horario de verano, asi que el desfase horario es fijo
+// todo el año -- no hace falta ninguna libreria de zonas horarias para esto.
+// ---------------------------------------------------------------------------
+
+const ZONA_HORARIA_OFFSET_HORAS = 5; // Colombia = UTC-5, todo el año
+const FRECUENCIAS_TAREA = ['una_vez', 'diaria', 'semanal'];
+const MAX_CARACTERES_TITULO_TAREA = 80;
+const MAX_CARACTERES_INSTRUCCION_TAREA = 1000;
+const MAX_TAREAS_POR_USUARIO = 20;
+const TAREAS_INTERVALO_MS = 5 * 60 * 1000;
+
+// Dado "HH:MM" (hora de Colombia) y, si es semanal, el dia de la semana
+// (0=domingo), calcula la proxima fecha/hora en UTC que sea *despues* de
+// `desde`. Sirve tanto para la primera vez que se programa una tarea como
+// para reprogramar la siguiente corrida despues de cada ejecucion.
+function calcularProximaEjecucionTarea(tarea, desde) {
+    const [h, m] = tarea.horaLocal.split(':').map(Number);
+    const base = desde || new Date();
+    const candidato = new Date(Date.UTC(
+        base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate(),
+        h + ZONA_HORARIA_OFFSET_HORAS, m, 0, 0
+    ));
+    if (tarea.frecuencia === 'semanal') {
+        while (candidato.getUTCDay() !== tarea.diaSemana || candidato <= base) {
+            candidato.setUTCDate(candidato.getUTCDate() + 1);
+        }
+    } else if (candidato <= base) {
+        candidato.setUTCDate(candidato.getUTCDate() + 1);
+    }
+    return candidato;
+}
+
+// El "request" que procesarMensajeChat espera solo lo usa para armar un link
+// (enviarSaldoBajo) -- aca no hay una peticion HTTP real de por medio (esto
+// lo dispara un timer, no un usuario tocando un boton), asi que se le pasa
+// un objeto minimo con lo unico que llega a leer.
+const REQUEST_FALSO_TAREAS = { protocol: 'https', get: () => 'lunaticoia.uk' };
+
+async function ejecutarUnaTareaProgramada(tarea) {
+    const tareasCol = db.collection('tareasProgramadas');
+    const users = db.collection('users');
+    const proyectosCol = db.collection('proyectos');
+    try {
+        const user = await users.findOne({ _id: tarea.userId });
+        if (!user) {
+            await tareasCol.updateOne({ _id: tarea._id }, { $set: { activa: false } });
+            return;
+        }
+
+        if (!user.creditosIlimitados && user.creditBalance <= 0) {
+            await enviarCorreo(
+                user.email,
+                'Pausamos tu tarea programada: ' + tarea.titulo,
+                'Se te acabaron los créditos, así que pausamos "' + tarea.titulo + '". ' +
+                    'Compra más en lunaticoia.uk y reactívala desde "Mis tareas" cuando quieras.',
+                '<p>Se te acabaron los créditos, así que pausamos <strong>' + escHtml(tarea.titulo) + '</strong>.</p>' +
+                    '<p>Compra más en <a href="https://lunaticoia.uk">lunaticoia.uk</a> y reactívala desde "Mis tareas" cuando quieras.</p>'
+            );
+            await tareasCol.updateOne({ _id: tarea._id }, { $set: { activa: false } });
+            return;
+        }
+
+        let proyecto = tarea.proyectoId && await proyectosCol.findOne({ _id: tarea.proyectoId });
+        if (!proyecto) {
+            const createdAt = new Date();
+            const r = await proyectosCol.insertOne({
+                userId: user._id, nombre: tarea.titulo, tipo: 'chat', createdAt, ultimaActividad: createdAt
+            });
+            proyecto = { _id: r.insertedId, userId: user._id, nombre: tarea.titulo, tipo: 'chat', createdAt, ultimaActividad: createdAt };
+            await tareasCol.updateOne({ _id: tarea._id }, { $set: { proyectoId: proyecto._id } });
+        }
+
+        const resultado = await procesarMensajeChat({
+            req: REQUEST_FALSO_TAREAS, userId: user._id, user, proyectoId: proyecto._id, proyectoActual: proyecto,
+            mensajeTexto: tarea.instruccion, contenidoUsuario: tarea.instruccion, claveModelo: MODELO_POR_DEFECTO
+        });
+
+        await enviarCorreo(
+            user.email,
+            'LunaticoIA: ' + tarea.titulo,
+            resultado.aiMessage,
+            '<p>' + escHtml(resultado.aiMessage).replace(/\n/g, '<br>') + '</p>' +
+                '<p><a href="https://lunaticoia.uk">Ver la conversación completa en LunaticoIA</a></p>'
+        );
+
+        const ahora = new Date();
+        if (tarea.frecuencia === 'una_vez') {
+            await tareasCol.updateOne({ _id: tarea._id }, { $set: { activa: false, ultimaEjecucion: ahora } });
+        } else {
+            await tareasCol.updateOne({ _id: tarea._id }, {
+                $set: { proximaEjecucion: calcularProximaEjecucionTarea(tarea, ahora), ultimaEjecucion: ahora }
+            });
+        }
+    } catch (error) {
+        console.error('✗ Error ejecutando tarea programada ' + tarea._id + ':', error.message);
+    }
+}
+
+async function ejecutarTareasProgramadas() {
+    try {
+        const pendientes = await db.collection('tareasProgramadas')
+            .find({ activa: true, proximaEjecucion: { $lte: new Date() } })
+            .toArray();
+        for (const tarea of pendientes) {
+            await ejecutarUnaTareaProgramada(tarea);
+        }
+    } catch (error) {
+        console.error('✗ Error revisando tareas programadas:', error.message);
+    }
+}
+
+app.get('/api/tareas', authenticateToken, async (req, res) => {
+    try {
+        const userId = new ObjectId(req.user.userId);
+        const tareas = await db.collection('tareasProgramadas').find({ userId }).sort({ createdAt: -1 }).toArray();
+        res.json({
+            tareas: tareas.map((t) => ({
+                id: t._id.toString(),
+                titulo: t.titulo,
+                instruccion: t.instruccion,
+                frecuencia: t.frecuencia,
+                horaLocal: t.horaLocal,
+                diaSemana: t.diaSemana,
+                activa: t.activa,
+                proximaEjecucion: t.proximaEjecucion,
+                ultimaEjecucion: t.ultimaEjecucion
+            }))
+        });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos cargar tus tareas.', error, 'tareas-listar');
+    }
+});
+
+app.post('/api/tareas', authenticateToken, async (req, res) => {
+    try {
+        if (!CORREO_CONFIGURADO) return res.status(503).json({ error: 'Las tareas programadas necesitan correo configurado.' });
+
+        const tareasCol = db.collection('tareasProgramadas');
+        const userId = new ObjectId(req.user.userId);
+        const yaTiene = await tareasCol.countDocuments({ userId });
+        if (yaTiene >= MAX_TAREAS_POR_USUARIO) {
+            return res.status(400).json({ error: 'Ya tienes el máximo de ' + MAX_TAREAS_POR_USUARIO + ' tareas programadas.' });
+        }
+
+        const titulo = typeof req.body.titulo === 'string' ? req.body.titulo.trim().slice(0, MAX_CARACTERES_TITULO_TAREA) : '';
+        const instruccion = typeof req.body.instruccion === 'string'
+            ? req.body.instruccion.trim().slice(0, MAX_CARACTERES_INSTRUCCION_TAREA) : '';
+        const frecuencia = FRECUENCIAS_TAREA.indexOf(req.body.frecuencia) !== -1 ? req.body.frecuencia : null;
+        const horaLocal = typeof req.body.horaLocal === 'string' && /^([01]\d|2[0-3]):([0-5]\d)$/.test(req.body.horaLocal)
+            ? req.body.horaLocal : null;
+        const diaSemana = Number.isInteger(req.body.diaSemana) && req.body.diaSemana >= 0 && req.body.diaSemana <= 6
+            ? req.body.diaSemana : null;
+
+        if (!titulo || !instruccion || !frecuencia || !horaLocal) {
+            return res.status(400).json({ error: 'Faltan datos de la tarea (título, instrucción, frecuencia y hora son obligatorios).' });
+        }
+        if (frecuencia === 'semanal' && diaSemana === null) {
+            return res.status(400).json({ error: 'Falta el día de la semana.' });
+        }
+
+        const createdAt = new Date();
+        const tarea = {
+            userId, titulo, instruccion, frecuencia, horaLocal,
+            diaSemana: frecuencia === 'semanal' ? diaSemana : null,
+            proximaEjecucion: null, activa: true, ultimaEjecucion: null, proyectoId: null, createdAt
+        };
+        tarea.proximaEjecucion = calcularProximaEjecucionTarea(tarea, createdAt);
+
+        const r = await tareasCol.insertOne(tarea);
+        res.json({ id: r.insertedId.toString(), proximaEjecucion: tarea.proximaEjecucion });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos crear la tarea.', error, 'tareas-crear');
+    }
+});
+
+app.patch('/api/tareas/:id', authenticateToken, async (req, res) => {
+    try {
+        const userId = new ObjectId(req.user.userId);
+        let tareaId;
+        try { tareaId = new ObjectId(req.params.id); } catch (e) { return res.status(400).json({ error: 'ID inválido.' }); }
+
+        const tareasCol = db.collection('tareasProgramadas');
+        const tarea = await tareasCol.findOne({ _id: tareaId, userId });
+        if (!tarea) return res.status(404).json({ error: 'Tarea no encontrada.' });
+
+        if (typeof req.body.activa === 'boolean') {
+            const cambios = { activa: req.body.activa };
+            if (req.body.activa) cambios.proximaEjecucion = calcularProximaEjecucionTarea(tarea, new Date());
+            await tareasCol.updateOne({ _id: tareaId }, { $set: cambios });
+        }
+        res.json({ ok: true });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos actualizar la tarea.', error, 'tareas-actualizar');
+    }
+});
+
+app.delete('/api/tareas/:id', authenticateToken, async (req, res) => {
+    try {
+        const userId = new ObjectId(req.user.userId);
+        let tareaId;
+        try { tareaId = new ObjectId(req.params.id); } catch (e) { return res.status(400).json({ error: 'ID inválido.' }); }
+        await db.collection('tareasProgramadas').deleteOne({ _id: tareaId, userId });
+        res.json({ ok: true });
+    } catch (error) {
+        fallo(res, 500, 'No pudimos borrar la tarea.', error, 'tareas-borrar');
+    }
+});
+
+// ---------------------------------------------------------------------------
 // Compartir respuestas
 //
 // Snapshot aparte de la pregunta+respuesta, en su propia coleccion -- nunca
@@ -2965,5 +3289,8 @@ connectDatabase().then(() => {
         console.log(`✓ Respaldo automático: ${CORREO_CONFIGURADO ? 'activado (cada 24h por correo)' : 'apagado (sin correo configurado)'}`);
         enviarRespaldoBaseDatos();
         setInterval(enviarRespaldoBaseDatos, RESPALDO_INTERVALO_MS);
+        console.log(`✓ Tareas programadas: ${CORREO_CONFIGURADO ? 'activadas (revisión cada 5 min)' : 'apagadas (sin correo configurado)'}`);
+        if (CORREO_CONFIGURADO) setInterval(ejecutarTareasProgramadas, TAREAS_INTERVALO_MS);
+        console.log(`✓ Generar imágenes: ${IMAGEN_GENERACION_CONFIGURADA ? 'Configurado (fal.ai)' : 'SIN CONFIGURAR (solo búsqueda de fotos reales)'}`);
     });
 });
