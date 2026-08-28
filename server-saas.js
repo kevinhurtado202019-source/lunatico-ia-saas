@@ -190,7 +190,19 @@ const SYSTEM_PROMPT_BASE = [
         'en tu respuesta igual que una foto real: en su propia linea, con ' +
         'sintaxis de imagen en markdown ![descripcion](URL-que-te-devolvio-' +
         'la-herramienta). Nunca inventes una URL de imagen generada por tu ' +
-        'cuenta.'
+        'cuenta.',
+    '',
+    'Si te piden cambiarle algo a una imagen -- quitar o cambiar el fondo, ' +
+        'un color, un objeto, o el texto/nombre que aparece escrito DENTRO ' +
+        'de la imagen (ej: "cambia el nombre de este diploma de Juan a ' +
+        'Carlos") -- usa la herramienta editar_imagen. Si la persona acaba ' +
+        'de adjuntar la foto en ese mismo mensaje, no necesitas darle ' +
+        'ninguna URL, la herramienta la toma sola del adjunto. Si en cambio ' +
+        'es sobre una imagen que ya aparecio antes en esta conversacion ' +
+        '(que vos generaste, buscaste, o que la persona pego como link), ' +
+        'copia esa URL tal cual del historial y pasala en imagen_url. Igual ' +
+        'que con las otras dos herramientas, pone el resultado en markdown ' +
+        'con la URL real que te devolvio la herramienta, nunca inventada.'
 ] : []).join('\n');
 
 const MAX_CARACTERES_INSTRUCCIONES = 600;
@@ -441,12 +453,120 @@ async function generarImagenFal(descripcion) {
 // cobra al costo, sin margen aparte).
 const CREDITOS_POR_GENERAR_IMAGEN = 3;
 
-// Lista final que se le manda a Claude: las de siempre + buscar_imagen y
-// generar_imagen, cada una solo si esta configurada (si no, ni se ofrece --
-// asi el modelo no puede "elegirla" y quedarse pegado esperando que exista).
+// ---------------------------------------------------------------------------
+// Editar imagenes con IA (fal.ai, modelo Flux Kontext)
+//
+// Cubre TODO pedido de "cambiale esto a esta imagen": quitar/cambiar el
+// fondo, cambiar un color u objeto, o el caso que motivo esta herramienta --
+// cambiar un nombre o texto que aparece escrito DENTRO de la imagen (un
+// diploma, un cartel, una etiqueta). Un solo modelo (Kontext) para todo eso,
+// en vez de una herramienta aparte por cada tipo de edicion.
+//
+// La imagen de entrada puede ser:
+//   (a) una que la persona acaba de adjuntar en ESTE mismo mensaje (bytes en
+//       base64, todavia sin URL publica) -- hay que subirla primero al
+//       storage de fal.ai para conseguirle una URL, o
+//   (b) una URL que ya aparecio antes en la conversacion (algo que esta
+//       misma IA genero con generar_imagen, encontro con buscar_imagen, o
+//       que la persona pego como link) -- ese caso el modelo la lee sola del
+//       historial y la manda como parametro, sin subir nada.
+// ---------------------------------------------------------------------------
+
+const HERRAMIENTA_EDITAR_IMAGEN = {
+    name: 'editar_imagen',
+    description: 'Edita una imagen existente con IA segun una instruccion -- cambiar o quitar ' +
+        'el fondo, un color, un objeto, o el texto/nombre que aparece escrito dentro de la ' +
+        'imagen (un diploma, un cartel, una etiqueta), etc. Sirve tanto para una foto que la ' +
+        'persona acaba de adjuntar en este mismo mensaje como para una imagen que ya aparecio ' +
+        'antes en esta conversacion (generada con generar_imagen, encontrada con buscar_imagen, ' +
+        'o un link que la persona pego).',
+    input_schema: {
+        type: 'object',
+        properties: {
+            instruccion: {
+                type: 'string',
+                description: 'Que cambiar en la imagen, con el mayor detalle posible, en ingles ' +
+                    'para mejor calidad.'
+            },
+            imagen_url: {
+                type: 'string',
+                description: 'URL de la imagen a editar -- SOLO si ya aparecio antes en esta ' +
+                    'conversacion (copiala tal cual del historial). Dejalo vacio si la persona ' +
+                    'acaba de adjuntar la foto en este mismo mensaje.'
+            }
+        },
+        required: ['instruccion']
+    }
+};
+
+// Mismos 4 formatos que Claude acepta como adjunto (ver TIPOS_IMAGEN_PERMITIDOS,
+// mas abajo) -- una imagen adjunta nunca puede tener otro media_type que estos.
+const EXTENSION_POR_MEDIA_TYPE_ADJUNTO = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp'
+};
+
+// Sube los bytes de una imagen adjunta al storage de fal.ai para conseguirle
+// una URL publica editable -- proceso de dos pasos documentado por fal.ai:
+// primero se pide una URL firmada donde subir, despues se sube el archivo ahi.
+async function subirImagenAFal(base64Data, mediaType) {
+    const extension = EXTENSION_POR_MEDIA_TYPE_ADJUNTO[mediaType] || 'jpg';
+    const iniciar = await fetch(
+        'https://rest.alpha.fal.ai/storage/upload/initiate?content_type=' + encodeURIComponent(mediaType) +
+            '&file_name=' + encodeURIComponent('adjunto.' + extension),
+        { method: 'POST', headers: { Authorization: 'Key ' + process.env.FAL_API_KEY } }
+    );
+    if (!iniciar.ok) {
+        const cuerpoError = await iniciar.text().catch(() => '');
+        throw new Error('fal.ai (iniciar subida) respondio ' + iniciar.status + ': ' + cuerpoError.slice(0, 500));
+    }
+    const { file_url, upload_url } = await iniciar.json();
+    if (!file_url || !upload_url) throw new Error('fal.ai no devolvio una URL de subida.');
+
+    const subida = await fetch(upload_url, {
+        method: 'PUT',
+        headers: { 'Content-Type': mediaType },
+        body: Buffer.from(base64Data, 'base64')
+    });
+    if (!subida.ok) throw new Error('fal.ai (subir archivo) respondio ' + subida.status);
+
+    return file_url;
+}
+
+async function editarImagenFal(instruccion, imagenUrl) {
+    const controlador = new AbortController();
+    const tiempoAgotado = setTimeout(() => controlador.abort(), 45000);
+    try {
+        const respuesta = await fetch('https://fal.run/fal-ai/flux-pro/kontext', {
+            method: 'POST',
+            headers: { Authorization: 'Key ' + process.env.FAL_API_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: String(instruccion || '').slice(0, 2000), image_url: imagenUrl }),
+            signal: controlador.signal
+        });
+        if (!respuesta.ok) {
+            const cuerpoError = await respuesta.text().catch(() => '');
+            throw new Error('fal.ai respondio ' + respuesta.status + ': ' + cuerpoError.slice(0, 500));
+        }
+        const datos = await respuesta.json();
+        const url = datos.images && datos.images[0] && datos.images[0].url;
+        if (!url) throw new Error('fal.ai no devolvio ninguna imagen editada');
+        console.log('editar_imagen "' + instruccion.slice(0, 80) + '": ' + url);
+        return url;
+    } finally {
+        clearTimeout(tiempoAgotado);
+    }
+}
+
+// Precio real de fal.ai para flux-pro/kontext: ~$0,04 por edicion -> 40
+// creditos al tipo de cambio de Rapido, mismo criterio de siempre.
+const CREDITOS_POR_EDITAR_IMAGEN = 40;
+
+// Lista final que se le manda a Claude: las de siempre + buscar_imagen,
+// generar_imagen y editar_imagen, cada una solo si esta configurada (si no,
+// ni se ofrece -- asi el modelo no puede "elegirla" y quedarse pegado
+// esperando que exista).
 const HERRAMIENTAS_PARA_CHAT = HERRAMIENTAS_IA
     .concat(IMAGEN_CONFIGURADA ? [HERRAMIENTA_BUSCAR_IMAGEN] : [])
-    .concat(IMAGEN_GENERACION_CONFIGURADA ? [HERRAMIENTA_GENERAR_IMAGEN] : []);
+    .concat(IMAGEN_GENERACION_CONFIGURADA ? [HERRAMIENTA_GENERAR_IMAGEN, HERRAMIENTA_EDITAR_IMAGEN] : []);
 
 // Imagenes adjuntas al chat (para que el usuario muestre capturas, disenos o
 // mockups de su proyecto). Van directo en el mensaje como bloque "image", sin
@@ -2028,6 +2148,7 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
     let response = null;
     let imagenesBuscadas = 0;
     let imagenesGeneradas = 0;
+    let imagenesEditadas = 0;
     const urlsImagenValidas = new Set();
     const usoAcumulado = { input_tokens: 0, output_tokens: 0, server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 } };
     const MAX_RONDAS_TOTAL = MAX_RONDAS_BUSCAR_IMAGEN + 1;
@@ -2060,12 +2181,36 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
 
         const contenidoRonda = Array.isArray(response.content) ? response.content : [];
         const llamadasImagen = contenidoRonda.filter((b) => b.type === 'tool_use' &&
-            (b.name === 'buscar_imagen' || b.name === 'generar_imagen'));
+            (b.name === 'buscar_imagen' || b.name === 'generar_imagen' || b.name === 'editar_imagen'));
         if (!llamadasImagen.length) break;
         if (ronda === MAX_RONDAS_TOTAL) break;
 
         mensajesRonda = mensajesRonda.concat([{ role: 'assistant', content: contenidoRonda }]);
         const resultadosTool = await Promise.all(llamadasImagen.map(async (llamada) => {
+            if (llamada.name === 'editar_imagen') {
+                imagenesEditadas++;
+                const instruccion = (llamada.input && llamada.input.instruccion) || '';
+                let imagenUrlEntrada = (llamada.input && llamada.input.imagen_url) || '';
+                try {
+                    if (!imagenUrlEntrada) {
+                        const bloqueImagen = Array.isArray(contenidoUsuario) &&
+                            contenidoUsuario.find((b) => b.type === 'image');
+                        if (!bloqueImagen || !bloqueImagen.source || bloqueImagen.source.type !== 'base64') {
+                            throw new Error('No hay ninguna imagen adjunta en este mensaje ni una URL de una imagen anterior.');
+                        }
+                        imagenUrlEntrada = await subirImagenAFal(bloqueImagen.source.data, bloqueImagen.source.media_type);
+                    }
+                    const urlEditada = await editarImagenFal(instruccion, imagenUrlEntrada);
+                    urlsImagenValidas.add(urlEditada);
+                    return { type: 'tool_result', tool_use_id: llamada.id, content: 'Imagen editada: ' + urlEditada };
+                } catch (errorEdicion) {
+                    console.error('✗ editar_imagen:', (errorEdicion && errorEdicion.message) || errorEdicion);
+                    return {
+                        type: 'tool_result', tool_use_id: llamada.id, is_error: true,
+                        content: 'La edicion de imagen fallo por un problema tecnico. Avisale a la persona que no se pudo editar la imagen ahora mismo.'
+                    };
+                }
+            }
             if (llamada.name === 'generar_imagen') {
                 imagenesGeneradas++;
                 const descripcion = (llamada.input && llamada.input.descripcion) || '';
@@ -2105,7 +2250,9 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
     const teniaContenidoAntes = !!aiMessage.trim();
     aiMessage = quitarImagenesInventadas(aiMessage, urlsImagenValidas);
     if (teniaContenidoAntes && !aiMessage.trim()) {
-        aiMessage = imagenesGeneradas > 0
+        aiMessage = imagenesEditadas > 0
+            ? 'No se pudo editar esa imagen.'
+            : imagenesGeneradas > 0
             ? 'No se pudo generar esa imagen.'
             : 'No encontré ninguna foto real que sirviera para eso.';
     }
@@ -2131,12 +2278,13 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
             '. Escribe "continúa" para que siga.*';
     }
 
-    const imagenesLlamadas = imagenesBuscadas + imagenesGeneradas;
+    const imagenesLlamadas = imagenesBuscadas + imagenesGeneradas + imagenesEditadas;
 
     // Se cobra DESPUES de una respuesta correcta: si la API falla, el
     // usuario no pierde saldo.
     const cobro = creditosDe(usoAcumulado, modelo.multiplicador) +
-        imagenesBuscadas * CREDITOS_POR_IMAGEN + imagenesGeneradas * CREDITOS_POR_GENERAR_IMAGEN;
+        imagenesBuscadas * CREDITOS_POR_IMAGEN + imagenesGeneradas * CREDITOS_POR_GENERAR_IMAGEN +
+        imagenesEditadas * CREDITOS_POR_EDITAR_IMAGEN;
     const nuevoSaldo = ilimitado ? user.creditBalance : Math.max(0, user.creditBalance - cobro);
 
     const guardadoEn = new Date();
