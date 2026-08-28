@@ -202,7 +202,17 @@ const SYSTEM_PROMPT_BASE = [
         '(que vos generaste, buscaste, o que la persona pego como link), ' +
         'copia esa URL tal cual del historial y pasala en imagen_url. Igual ' +
         'que con las otras dos herramientas, pone el resultado en markdown ' +
-        'con la URL real que te devolvio la herramienta, nunca inventada.'
+        'con la URL real que te devolvio la herramienta, nunca inventada.',
+    '',
+    'Regla de honestidad para las tres herramientas de imagen: NUNCA digas ' +
+        '"aca esta la imagen editada/generada" ni nada parecido si no ' +
+        'llamaste de verdad a la herramienta y te devolvio una URL real -- ' +
+        'ni inventes esa URL ni finjas que la edicion/generacion funciono. ' +
+        'Si decidis no hacer un pedido (por ejemplo, cambiar la expresion o ' +
+        'la cara de una persona real e identificable en una foto, que la ' +
+        'herramienta de edicion puede rechazar por politica de uso), decilo ' +
+        'con honestidad y explica por que, en vez de simular que si lo ' +
+        'hiciste.'
 ] : []).join('\n');
 
 const MAX_CARACTERES_INSTRUCCIONES = 600;
