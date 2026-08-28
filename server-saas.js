@@ -629,7 +629,10 @@ const HERRAMIENTA_PROBAR_PRENDA = {
 
 async function probarPrendaFal(personaUrl, prendaUrl, categoria) {
     const controlador = new AbortController();
-    const tiempoAgotado = setTimeout(() => controlador.abort(), 60000);
+    // IDM-VTON es bastante mas lento que los modelos Flux (buscar/generar/
+    // editar) -- probado en produccion el 27 de agosto: con 60s de margen
+    // se cancelaba a la mitad ("This operation was aborted").
+    const tiempoAgotado = setTimeout(() => controlador.abort(), 120000);
     try {
         const respuesta = await fetch('https://fal.run/fal-ai/idm-vton', {
             method: 'POST',
