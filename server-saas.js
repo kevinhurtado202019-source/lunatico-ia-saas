@@ -657,7 +657,15 @@ async function probarPrendaFal(personaUrl, prendaUrl, categoria) {
         headers: cabeceras,
         body: JSON.stringify({
             model_image: personaUrl, garment_image: prendaUrl,
-            category: ['tops', 'bottoms', 'one-pieces', 'auto'].includes(categoria) ? categoria : 'auto'
+            category: ['tops', 'bottoms', 'one-pieces', 'auto'].includes(categoria) ? categoria : 'auto',
+            // segmentation_free:false prende el "human parsing" (identifica
+            // brazos/manos con precision) -- sin esto, probado en produccion
+            // el 27 de agosto, un objeto sostenido cerca del pecho (un
+            // celular) desaparecia del resultado. mode:'quality' es mas
+            // lento que el 'balanced' por defecto pero preserva mejor esos
+            // detalles finos.
+            segmentation_free: false,
+            mode: 'quality'
         })
     });
     if (!envio.ok) {
