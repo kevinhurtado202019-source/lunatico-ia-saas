@@ -892,6 +892,11 @@
     display: grid; place-items: center; color: var(--tenue); font-size: 13px;
   }
   .adjunto-quitar:hover { background: var(--alta); color: var(--texto); }
+  .adjunto-referencia {
+    flex: none; border-radius: 8px; padding: 5px 9px; font-size: 12px;
+    color: var(--suave); border: 1px solid var(--borde-suave); background: transparent;
+  }
+  .adjunto-referencia:hover { background: var(--alta); color: var(--texto); }
 
   .nota-pie {
     text-align: center; font-size: 12px; color: var(--tenue);
@@ -1440,8 +1445,15 @@
         <img id="adjuntoPreview" alt="" class="oculto">
         <span class="adjunto-icono oculto" id="adjuntoIcono" aria-hidden="true"></span>
         <span class="adjunto-nombre" id="adjuntoNombre"></span>
+        <button type="button" class="adjunto-referencia oculto" id="btnAgregarReferencia" onclick="document.getElementById('archivoReferencia').click()" title="Para pedirle a la IA que le pruebe esta prenda a la persona de la foto">+ Prenda</button>
         <button type="button" class="adjunto-quitar" onclick="quitarAdjunto()" aria-label="Quitar archivo" title="Quitar archivo">✕</button>
       </div>
+      <div class="adjunto oculto" id="cajaReferencia">
+        <img id="referenciaPreview" alt="">
+        <span class="adjunto-nombre" id="referenciaNombre"></span>
+        <button type="button" class="adjunto-quitar" onclick="quitarReferencia()" aria-label="Quitar prenda de referencia" title="Quitar prenda de referencia">✕</button>
+      </div>
+      <input type="file" id="archivoReferencia" accept="image/jpeg,image/png,image/gif,image/webp" class="oculto" onchange="elegirArchivoReferencia(event)">
       <div class="caja">
         <textarea id="entrada" rows="1" aria-label="Escribe tu mensaje" placeholder="Escribe tu mensaje…" oninput="ajustarAlto()" onkeydown="teclas(event)"></textarea>
         <div class="controles">
@@ -1749,6 +1761,7 @@
   var saldoMostrado = null;
   // { tipo:'imagen', mediaType, datos, nombre } | { tipo:'documento', mediaType, datos, nombre } | { tipo:'texto', contenido, nombre }
   var adjuntoActual = null;
+  var adjuntoReferencia = null; // solo se ofrece junto a una imagen -- ver probar_prenda
   var MAX_IMAGEN_BYTES = 10 * 1024 * 1024;
   var reducirMovimiento = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -2524,6 +2537,7 @@
         var datos = resultado.slice(resultado.indexOf(',') + 1);
         adjuntoActual = { tipo: 'imagen', mediaType: archivo.type, datos: datos, nombre: archivo.name };
         mostrarAdjunto(archivo.name, resultado);
+        $('btnAgregarReferencia').classList.remove('oculto');
       };
       lectorImg.onerror = function () { avisoPie('No se pudo leer la imagen. Inténtalo de nuevo.'); };
       lectorImg.readAsDataURL(archivo);
@@ -2604,6 +2618,45 @@
     adjuntoActual = null;
     $('cajaAdjunto').classList.add('oculto');
     $('adjuntoPreview').src = '';
+    $('btnAgregarReferencia').classList.add('oculto');
+    quitarReferencia();
+    ajustarAlto();
+  };
+
+  // Segundo adjunto, opcional: una foto de una prenda para que la IA la
+  // "pruebe" de verdad sobre la persona de la foto principal (ver
+  // probar_prenda). Solo tiene sentido junto a una imagen principal, por
+  // eso se vacia solo si se quita esa imagen (ver quitarAdjunto arriba).
+  window.elegirArchivoReferencia = function (e) {
+    var archivo = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!archivo) return;
+    if (TIPOS_IMAGEN_VALIDOS.indexOf(archivo.type) === -1) {
+      avisoPie('La prenda de referencia tiene que ser una imagen.');
+      return;
+    }
+    if (archivo.size > MAX_IMAGEN_BYTES) {
+      avisoPie('La imagen pesa demasiado (máximo 10 MB).');
+      return;
+    }
+    var lector = new FileReader();
+    lector.onload = function () {
+      var resultado = String(lector.result || '');
+      var datos = resultado.slice(resultado.indexOf(',') + 1);
+      adjuntoReferencia = { mediaType: archivo.type, datos: datos, nombre: archivo.name };
+      $('referenciaPreview').src = resultado;
+      $('referenciaNombre').textContent = archivo.name;
+      $('cajaReferencia').classList.remove('oculto');
+      ajustarAlto();
+    };
+    lector.onerror = function () { avisoPie('No se pudo leer la imagen. Inténtalo de nuevo.'); };
+    lector.readAsDataURL(archivo);
+  };
+
+  window.quitarReferencia = function () {
+    adjuntoReferencia = null;
+    $('cajaReferencia').classList.add('oculto');
+    $('referenciaPreview').src = '';
     ajustarAlto();
   };
 
@@ -2933,6 +2986,7 @@
     var t = $('entrada');
     var mensaje = t.value.trim();
     var adjunto = adjuntoActual;
+    var referencia = adjunto && adjunto.tipo === 'imagen' ? adjuntoReferencia : null;
     if (!mensaje && !adjunto) return;
 
     enviando = true;
@@ -2947,6 +3001,13 @@
       imagenMio.alt = adjunto.nombre;
       imagenMio.className = 'imagen-mensaje';
       mio.texto.insertBefore(imagenMio, mio.texto.firstChild);
+      if (referencia) {
+        var referenciaMio = document.createElement('img');
+        referenciaMio.src = 'data:' + referencia.mediaType + ';base64,' + referencia.datos;
+        referenciaMio.alt = referencia.nombre;
+        referenciaMio.className = 'imagen-mensaje';
+        mio.texto.insertBefore(referenciaMio, mio.texto.firstChild);
+      }
     } else if (adjunto) {
       var chipMio = document.createElement('div');
       chipMio.className = 'archivo-mensaje';
@@ -2970,6 +3031,7 @@
       modelo: $('modo').value || undefined,
       proyectoId: proyectoActual ? proyectoActual.id : undefined,
       imagen: adjunto && adjunto.tipo === 'imagen' ? { mediaType: adjunto.mediaType, datos: adjunto.datos } : undefined,
+      imagenReferencia: referencia ? { mediaType: referencia.mediaType, datos: referencia.datos } : undefined,
       documento: adjunto && adjunto.tipo === 'documento' ? { mediaType: adjunto.mediaType, datos: adjunto.datos, nombre: adjunto.nombre } : undefined,
       archivoTexto: adjunto && adjunto.tipo === 'texto' ? { contenido: adjunto.contenido, nombre: adjunto.nombre } : undefined,
       archivoOficina: adjunto && adjunto.tipo === 'oficina' ? { tipo: adjunto.subtipo, datos: adjunto.datos, nombre: adjunto.nombre } : undefined,
@@ -3095,6 +3157,13 @@
       if (adjunto) {
         adjuntoActual = adjunto;
         mostrarAdjunto(adjunto.nombre, adjunto.tipo === 'imagen' ? ('data:' + adjunto.mediaType + ';base64,' + adjunto.datos) : null);
+        if (adjunto.tipo === 'imagen') $('btnAgregarReferencia').classList.remove('oculto');
+        if (referencia) {
+          adjuntoReferencia = referencia;
+          $('referenciaPreview').src = 'data:' + referencia.mediaType + ';base64,' + referencia.datos;
+          $('referenciaNombre').textContent = referencia.nombre;
+          $('cajaReferencia').classList.remove('oculto');
+        }
       }
       avisoPie('No se pudo enviar. Revisa tu conexión y vuelve a intentarlo.');
     }).then(function () {

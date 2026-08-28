@@ -210,14 +210,24 @@ const SYSTEM_PROMPT_BASE = [
         'objetos, texto) funcionan sin problema. Sos vos quien tiene que ' +
         'intentarlo, no adivinar si va a fallar.',
     '',
-    'Regla de honestidad para las tres herramientas de imagen: NUNCA digas ' +
-        '"aca esta la imagen editada/generada" ni nada parecido si no ' +
-        'llamaste de verdad a la herramienta y te devolvio una URL real -- ' +
-        'ni inventes esa URL ni finjas que la edicion/generacion funciono. ' +
-        'Si LA HERRAMIENTA (no vos) responde con un error -- por ejemplo, ' +
-        'porque su politica de uso rechazo un cambio muy sensible sobre la ' +
-        'cara o identidad de una persona real -- decilo con honestidad y ' +
-        'explica que fallo, en vez de simular que si funciono.'
+    'Si la persona adjunto DOS imagenes en el mismo mensaje -- una persona y ' +
+        'una prenda de ropa -- y pide probarsela, ponersela, o "como me ' +
+        'veria con esto", usa la herramienta probar_prenda en vez de ' +
+        'editar_imagen: esa combina las dos fotos reales de verdad (respeta ' +
+        'el diseño/colores exactos de la prenda de la foto), mientras que ' +
+        'editar_imagen solo reinterpreta una descripcion de texto y NUNCA ' +
+        'copia el diseño real de una prenda puntual. Si la prenda que piden ' +
+        'solo esta descrita en palabras (sin una foto de ella en este ' +
+        'mensaje), usa editar_imagen en su lugar.',
+    '',
+    'Regla de honestidad para las cuatro herramientas de imagen: NUNCA digas ' +
+        '"aca esta la imagen editada/generada/con la prenda puesta" ni nada ' +
+        'parecido si no llamaste de verdad a la herramienta y te devolvio ' +
+        'una URL real -- ni inventes esa URL ni finjas que funciono. Si LA ' +
+        'HERRAMIENTA (no vos) responde con un error -- por ejemplo, porque ' +
+        'su politica de uso rechazo un cambio muy sensible sobre la cara o ' +
+        'identidad de una persona real -- decilo con honestidad y explica ' +
+        'que fallo, en vez de simular que si funciono.'
 ] : []).join('\n');
 
 const MAX_CARACTERES_INSTRUCCIONES = 600;
@@ -578,13 +588,85 @@ async function editarImagenFal(instruccion, imagenUrl) {
 // creditos al tipo de cambio de Rapido, mismo criterio de siempre.
 const CREDITOS_POR_EDITAR_IMAGEN = 40;
 
+// ---------------------------------------------------------------------------
+// Probar ropa con IA (fal.ai, modelo IDM-VTON)
+//
+// Distinta de editar_imagen: esa reinterpreta/inventa la prenda a partir de
+// una descripcion de texto (nunca copia el diseño real de una prenda
+// puntual). Esta en cambio combina DOS FOTOS REALES -- la persona y la
+// prenda exacta -- con un modelo especializado en "probador virtual", asi
+// que el resultado sí respeta el diseño/colores reales de esa prenda.
+//
+// Requiere que la persona haya adjuntado DOS imagenes en el mismo mensaje
+// (ver imagenReferenciaValida en /api/chat): la principal (la persona) y la
+// de referencia (la prenda), en ese orden -- el handler las toma de
+// contenidoUsuario por posicion, no hay forma de pasarlas por URL como con
+// editar_imagen porque no tendria sentido pedirle al modelo que "recuerde"
+// dos fotos de ropa entre turnos.
+// ---------------------------------------------------------------------------
+
+const HERRAMIENTA_PROBAR_PRENDA = {
+    name: 'probar_prenda',
+    description: 'Prueba virtualmente una prenda de ropa sobre una persona, combinando DE VERDAD ' +
+        'dos fotos reales (a diferencia de editar_imagen, que solo reinterpreta una descripcion de ' +
+        'texto y no copia el diseño exacto de una prenda). Usala SOLO cuando la persona adjunto DOS ' +
+        'imagenes en este mismo mensaje -- la persona y la prenda -- y pide algo como "ponle esta ' +
+        'ropa", "pruebate esta camiseta", "como me veria con esto puesto". Si la prenda solo esta ' +
+        'descrita en palabras (sin una foto real de ella), usa editar_imagen en su lugar.',
+    input_schema: {
+        type: 'object',
+        properties: {
+            categoria: {
+                type: 'string',
+                enum: ['upper_body', 'lower_body', 'dresses'],
+                description: 'Tipo de prenda: upper_body (camiseta/camisa/chaqueta/top), ' +
+                    'lower_body (pantalon/falda/short), o dresses (vestido/enterizo).'
+            }
+        },
+        required: ['categoria']
+    }
+};
+
+async function probarPrendaFal(personaUrl, prendaUrl, categoria) {
+    const controlador = new AbortController();
+    const tiempoAgotado = setTimeout(() => controlador.abort(), 60000);
+    try {
+        const respuesta = await fetch('https://fal.run/fal-ai/idm-vton', {
+            method: 'POST',
+            headers: { Authorization: 'Key ' + process.env.FAL_API_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                human_image_url: personaUrl, garment_image_url: prendaUrl,
+                category: ['upper_body', 'lower_body', 'dresses'].includes(categoria) ? categoria : 'upper_body'
+            }),
+            signal: controlador.signal
+        });
+        if (!respuesta.ok) {
+            const cuerpoError = await respuesta.text().catch(() => '');
+            throw new Error('fal.ai respondio ' + respuesta.status + ': ' + cuerpoError.slice(0, 500));
+        }
+        const datos = await respuesta.json();
+        // IDM-VTON devuelve un solo "image" (no un array "images" como los
+        // modelos Flux) -- se revisan las dos formas por si acaso.
+        const url = (datos.image && datos.image.url) || (datos.images && datos.images[0] && datos.images[0].url);
+        if (!url) throw new Error('fal.ai no devolvio ninguna imagen de la prueba de ropa');
+        console.log('probar_prenda: ' + url);
+        return url;
+    } finally {
+        clearTimeout(tiempoAgotado);
+    }
+}
+
+// Precio real de fal.ai para idm-vton: ~$0,05 por prueba -> 50 creditos al
+// tipo de cambio de Rapido, mismo criterio de siempre.
+const CREDITOS_POR_PROBAR_PRENDA = 50;
+
 // Lista final que se le manda a Claude: las de siempre + buscar_imagen,
-// generar_imagen y editar_imagen, cada una solo si esta configurada (si no,
-// ni se ofrece -- asi el modelo no puede "elegirla" y quedarse pegado
-// esperando que exista).
+// generar_imagen, editar_imagen y probar_prenda, cada una solo si esta
+// configurada (si no, ni se ofrece -- asi el modelo no puede "elegirla" y
+// quedarse pegado esperando que exista).
 const HERRAMIENTAS_PARA_CHAT = HERRAMIENTAS_IA
     .concat(IMAGEN_CONFIGURADA ? [HERRAMIENTA_BUSCAR_IMAGEN] : [])
-    .concat(IMAGEN_GENERACION_CONFIGURADA ? [HERRAMIENTA_GENERAR_IMAGEN, HERRAMIENTA_EDITAR_IMAGEN] : []);
+    .concat(IMAGEN_GENERACION_CONFIGURADA ? [HERRAMIENTA_GENERAR_IMAGEN, HERRAMIENTA_EDITAR_IMAGEN, HERRAMIENTA_PROBAR_PRENDA] : []);
 
 // Imagenes adjuntas al chat (para que el usuario muestre capturas, disenos o
 // mockups de su proyecto). Van directo en el mensaje como bloque "image", sin
@@ -2184,6 +2266,7 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
     let imagenesBuscadas = 0;
     let imagenesGeneradas = 0;
     let imagenesEditadas = 0;
+    let imagenesProbadas = 0;
     const urlsImagenValidas = new Set();
     const usoAcumulado = { input_tokens: 0, output_tokens: 0, server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 } };
     const MAX_RONDAS_TOTAL = MAX_RONDAS_BUSCAR_IMAGEN + 1;
@@ -2216,12 +2299,41 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
 
         const contenidoRonda = Array.isArray(response.content) ? response.content : [];
         const llamadasImagen = contenidoRonda.filter((b) => b.type === 'tool_use' &&
-            (b.name === 'buscar_imagen' || b.name === 'generar_imagen' || b.name === 'editar_imagen'));
+            (b.name === 'buscar_imagen' || b.name === 'generar_imagen' || b.name === 'editar_imagen' || b.name === 'probar_prenda'));
         if (!llamadasImagen.length) break;
         if (ronda === MAX_RONDAS_TOTAL) break;
 
         mensajesRonda = mensajesRonda.concat([{ role: 'assistant', content: contenidoRonda }]);
         const resultadosTool = await Promise.all(llamadasImagen.map(async (llamada) => {
+            if (llamada.name === 'probar_prenda') {
+                const categoria = (llamada.input && llamada.input.categoria) || 'upper_body';
+                const bloquesImagen = Array.isArray(contenidoUsuario)
+                    ? contenidoUsuario.filter((b) => b.type === 'image' && b.source && b.source.type === 'base64')
+                    : [];
+                if (bloquesImagen.length < 2) {
+                    return {
+                        type: 'tool_result', tool_use_id: llamada.id, is_error: true,
+                        content: 'Hacen falta DOS imagenes adjuntas en este mismo mensaje (la persona y la ' +
+                            'prenda) para usar esta herramienta -- pedile a la persona que adjunte ambas.'
+                    };
+                }
+                imagenesProbadas++;
+                try {
+                    const [personaUrl, prendaUrl] = await Promise.all([
+                        subirImagenAFal(bloquesImagen[0].source.data, bloquesImagen[0].source.media_type),
+                        subirImagenAFal(bloquesImagen[1].source.data, bloquesImagen[1].source.media_type)
+                    ]);
+                    const urlResultado = await probarPrendaFal(personaUrl, prendaUrl, categoria);
+                    urlsImagenValidas.add(urlResultado);
+                    return { type: 'tool_result', tool_use_id: llamada.id, content: 'Imagen con la prenda probada: ' + urlResultado };
+                } catch (errorPrenda) {
+                    console.error('✗ probar_prenda:', (errorPrenda && errorPrenda.message) || errorPrenda);
+                    return {
+                        type: 'tool_result', tool_use_id: llamada.id, is_error: true,
+                        content: 'La prueba de la prenda fallo por un problema tecnico. Avisale a la persona que no se pudo hacer ahora mismo.'
+                    };
+                }
+            }
             if (llamada.name === 'editar_imagen') {
                 const instruccion = (llamada.input && llamada.input.instruccion) || '';
                 let imagenUrlEntrada = (llamada.input && llamada.input.imagen_url) || '';
@@ -2305,7 +2417,9 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
     const teniaContenidoAntes = !!aiMessage.trim();
     aiMessage = quitarImagenesInventadas(aiMessage, urlsImagenValidas);
     if (teniaContenidoAntes && !aiMessage.trim()) {
-        aiMessage = imagenesEditadas > 0
+        aiMessage = imagenesProbadas > 0
+            ? 'No se pudo probar esa prenda.'
+            : imagenesEditadas > 0
             ? 'No se pudo editar esa imagen.'
             : imagenesGeneradas > 0
             ? 'No se pudo generar esa imagen.'
@@ -2333,13 +2447,13 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
             '. Escribe "continúa" para que siga.*';
     }
 
-    const imagenesLlamadas = imagenesBuscadas + imagenesGeneradas + imagenesEditadas;
+    const imagenesLlamadas = imagenesBuscadas + imagenesGeneradas + imagenesEditadas + imagenesProbadas;
 
     // Se cobra DESPUES de una respuesta correcta: si la API falla, el
     // usuario no pierde saldo.
     const cobro = creditosDe(usoAcumulado, modelo.multiplicador) +
         imagenesBuscadas * CREDITOS_POR_IMAGEN + imagenesGeneradas * CREDITOS_POR_GENERAR_IMAGEN +
-        imagenesEditadas * CREDITOS_POR_EDITAR_IMAGEN;
+        imagenesEditadas * CREDITOS_POR_EDITAR_IMAGEN + imagenesProbadas * CREDITOS_POR_PROBAR_PRENDA;
     const nuevoSaldo = ilimitado ? user.creditBalance : Math.max(0, user.creditBalance - cobro);
 
     const guardadoEn = new Date();
@@ -2394,7 +2508,7 @@ async function procesarMensajeChat({ req, userId, user, proyectoId, proyectoActu
 
 app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
     try {
-        const { message, imagen, documento, archivoTexto, archivoOficina, archivoZip } = req.body;
+        const { message, imagen, imagenReferencia, documento, archivoTexto, archivoOficina, archivoZip } = req.body;
         const claveModelo = req.body.modelo || MODELO_POR_DEFECTO;
         let mensajeTexto = typeof message === 'string' ? message.trim() : '';
 
@@ -2410,6 +2524,23 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
                 return res.status(400).json({ error: 'Imagen no válida' });
             }
             imagenValida = { mediaType: imagen.mediaType, datos: imagen.datos };
+        }
+
+        // Segunda imagen opcional (solo tiene sentido junto a imagenValida):
+        // una prenda de referencia para probar_prenda -- ver la seccion
+        // completa de esa herramienta, mas abajo.
+        let imagenReferenciaValida = null;
+        if (imagenReferencia != null && imagenValida) {
+            if (
+                typeof imagenReferencia !== 'object' ||
+                !TIPOS_IMAGEN_PERMITIDOS.includes(imagenReferencia.mediaType) ||
+                typeof imagenReferencia.datos !== 'string' ||
+                !imagenReferencia.datos ||
+                imagenReferencia.datos.length > MAX_BASE64_IMAGEN
+            ) {
+                return res.status(400).json({ error: 'Imagen de referencia no válida' });
+            }
+            imagenReferenciaValida = { mediaType: imagenReferencia.mediaType, datos: imagenReferencia.datos };
         }
 
         let documentoValido = null;
@@ -2554,6 +2685,18 @@ app.post('/api/chat', chatLimiter, authenticateToken, async (req, res) => {
             contenidoUsuario = [];
             if (imagenValida) {
                 contenidoUsuario.push({ type: 'image', source: { type: 'base64', media_type: imagenValida.mediaType, data: imagenValida.datos } });
+            }
+            // La imagen de la prenda va justo despues, con una aclaracion en
+            // medio -- asi el modelo nunca confunde cual de las dos es la
+            // persona y cual es la prenda que hay que probarle (ver
+            // probar_prenda, que asume ese orden exacto).
+            if (imagenReferenciaValida) {
+                contenidoUsuario.push({
+                    type: 'text',
+                    text: 'La imagen de arriba es la persona/foto principal. La imagen de abajo es una ' +
+                        'prenda de referencia -- si piden probarsela, usa la herramienta probar_prenda.'
+                });
+                contenidoUsuario.push({ type: 'image', source: { type: 'base64', media_type: imagenReferenciaValida.mediaType, data: imagenReferenciaValida.datos } });
             }
             if (documentoValido) {
                 contenidoUsuario.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: documentoValido.datos } });
